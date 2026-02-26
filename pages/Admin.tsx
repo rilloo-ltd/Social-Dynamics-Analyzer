@@ -3,6 +3,9 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { format, parseISO } from 'date-fns';
 import { Eye, ChevronDown, ChevronUp, Download, Trash2, Lock } from 'lucide-react';
 import { AnalysisType } from '../types';
+import { Header } from '../components/Header';
+import { auth } from '../firebase';
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 
 interface UploadStat {
   timestamp: string;
@@ -48,7 +51,7 @@ const ChatViewerModal: React.FC<{ text: string | any[], onClose: () => void }> =
     const displayText = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
     
     return (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 z-[150] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col">
                 <div className="p-4 border-b flex justify-between items-center">
                     <h3 className="text-lg font-bold">Full Anonymized Chat</h3>
@@ -69,9 +72,14 @@ export const AdminPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
   const [viewingSessionText, setViewingSessionText] = useState<string | any[] | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(auth.currentUser);
 
   useEffect(() => {
     console.log("AdminPage mounted");
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+    });
+    return () => unsubscribe();
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -136,30 +144,33 @@ export const AdminPage: React.FC = () => {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <form onSubmit={handleLogin} className="bg-white p-8 rounded-xl shadow-md w-full max-w-md">
-          <div className="text-center mb-4">
-            <span className="text-[10px] text-gray-300 uppercase tracking-widest">Admin Module v1.0.1</span>
-          </div>
-          <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Admin Login</h2>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter password"
-            className="w-full p-3 border rounded-lg mb-4 focus:ring-2 focus:ring-indigo-500 outline-none"
-          />
-          <button type="submit" className="w-full bg-indigo-600 text-white p-3 rounded-lg font-bold hover:bg-indigo-700 transition-colors mb-4">
-            Login
-          </button>
-          <button 
-            type="button"
-            onClick={() => alert("JavaScript is working!")}
-            className="w-full bg-gray-200 text-gray-700 p-2 rounded-lg text-sm hover:bg-gray-300 transition-colors"
-          >
-            Test JS (Click me)
-          </button>
-        </form>
+      <div className="min-h-screen bg-gray-100 flex flex-col">
+        <Header user={user} onSignOut={() => auth.signOut()} />
+        <div className="flex-1 flex items-center justify-center">
+            <form onSubmit={handleLogin} className="bg-white p-8 rounded-xl shadow-md w-full max-w-md">
+            <div className="text-center mb-4">
+                <span className="text-[10px] text-gray-300 uppercase tracking-widest">Admin Module v1.0.1</span>
+            </div>
+            <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Admin Login</h2>
+            <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                className="w-full p-3 border rounded-lg mb-4 focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+            <button type="submit" className="w-full bg-indigo-600 text-white p-3 rounded-lg font-bold hover:bg-indigo-700 transition-colors mb-4">
+                Login
+            </button>
+            <button 
+                type="button"
+                onClick={() => alert("JavaScript is working!")}
+                className="w-full bg-gray-200 text-gray-700 p-2 rounded-lg text-sm hover:bg-gray-300 transition-colors"
+            >
+                Test JS (Click me)
+            </button>
+            </form>
+        </div>
       </div>
     );
   }
@@ -184,8 +195,9 @@ export const AdminPage: React.FC = () => {
   })).sort((a, b) => a.date.localeCompare(b.date));
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8 font-sans">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-gray-50 font-sans">
+      <Header user={user} onSignOut={() => auth.signOut()} showAdmin={false} />
+      <div className="max-w-7xl mx-auto p-8">
         <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-black text-gray-900">Admin Dashboard</h1>
             <div className="flex gap-4 items-center">
