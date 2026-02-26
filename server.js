@@ -7,8 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const portArgIndex = process.argv.indexOf('--port');
-const PORT = portArgIndex !== -1 ? parseInt(process.argv[portArgIndex + 1], 10) : 3000;
+const PORT = 3000;
 const isProd = process.env.NODE_ENV === 'production' || !!process.env.K_SERVICE;
 const DATA_DIR = isProd ? '/tmp/data' : path.join(process.cwd(), 'data');
 const STATS_FILE = path.join(DATA_DIR, 'stats.json');

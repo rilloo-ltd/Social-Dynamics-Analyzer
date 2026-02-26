@@ -8,6 +8,8 @@ import { AnalysisCard } from './components/AnalysisCard';
 import { AnalysisModal } from './components/AnalysisModal';
 import { GroupParticipantSelector } from './components/GroupParticipantSelector';
 
+import { Routes, Route, useNavigate } from 'react-router-dom';
+import { AdminPage } from './pages/Admin';
 import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, HelpCircle, FileText } from 'lucide-react';
 
 export const LOGO_URL = "https://madaduhcom.wpcomstaging.com/wp-content/uploads/2026/02/logo-psychologist.png";
@@ -191,6 +193,7 @@ const HowToExport: React.FC = () => {
 };
 
 const MainApp: React.FC = () => {
+  const navigate = useNavigate();
   const [chatData, setChatData] = useState<ParsedChat | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [activeAnalysisType, setActiveAnalysisType] = useState<AnalysisType | null>(null);
@@ -910,4 +913,11 @@ const MainApp: React.FC = () => {
   );
 };
 
-export { MainApp };
+export const App: React.FC = () => {
+  return (
+    <Routes>
+      <Route path="/admin" element={<AdminPage />} />
+      <Route path="/" element={<MainApp />} />
+    </Routes>
+  );
+};
