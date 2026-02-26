@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { CardColor } from '../types';
-import { summarizeForSharing, getVisualAssetData, generateCartoonImage, VisualAssetData } from '../services/geminiService';
+import { serverSummarizeForSharing, serverGetVisualAssetData, serverGenerateCartoonImage, VisualAssetData } from '@/lib/gemini-server';
+import { updateChatCacheAction } from '@/app/actions/analytics-actions';
 
 interface AnalysisModalProps {
   isOpen: boolean;
@@ -287,7 +288,10 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
     } else if (version === 'abbreviated') {
       setIsSummarizing(true);
       try {
-        const summary = await summarizeForSharing(displayContent, chatCode);
+        const summary = await serverSummarizeForSharing(displayContent);
+        if (chatCode) {
+          updateChatCacheAction(chatCode, 'summary_for_sharing', summary).catch(e => console.error('Failed to log summary', e));
+        }
         setSelectedShareText(constructShareableText(summary));
         setShareHubState('platform');
       } catch { alert("אירעה שגיאה בסיכום."); }
@@ -295,9 +299,12 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
     } else if (version === 'cartoon_image') {
       setIsSummarizing(true);
       try {
-        const vData = await getVisualAssetData(displayContent, title, chatCode);
+        const vData = await serverGetVisualAssetData(displayContent, title);
+        if (chatCode) {
+          updateChatCacheAction(chatCode, 'visual_asset_data', vData).catch(e => console.error('Failed to log visual data', e));
+        }
         setVisualData(vData);
-        const url = await generateCartoonImage(vData.visualPrompt);
+        const url = await serverGenerateCartoonImage(vData.visualPrompt);
         if (onLogImageGeneration) onLogImageGeneration();
         setVisualAssetUrl(url);
         setShareHubState('visual_preview');

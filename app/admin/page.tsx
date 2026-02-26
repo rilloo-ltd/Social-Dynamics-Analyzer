@@ -2,11 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { verifyAdminPasswordAction, getAdminStatsAction } from '@/app/actions/admin-actions';
 
 interface Stats {
-  files: { timestamp: string; participantsCount: number }[];
-  tokens: { totalInput: number; totalOutput: number; totalCostUsd: number };
+  uploads: Array<{ timestamp: string; participantsCount: number; tokensCount: number; sessionId: string }>;
   buttonPresses: Record<string, number>;
+  geminiUsage: Array<{ timestamp: string; inputTokens: number; outputTokens: number; model: string }>;
+  sessions: Record<string, { shares: Array<{ type: string; platform?: string; timestamp: string }>; images: Array<{ prompt: string; timestamp: string; }>; feedback?: { rating: number; comment: string; timestamp: string } }>;
+  chats: Array<{ code: string; timestamp: string; outputs: Record<string, { output: any; timestamp: string }> }>;
 }
 
 export default function AdminPage() {
@@ -42,24 +45,19 @@ export default function AdminPage() {
     
     try {
       console.log('Attempting login...');
-      const res = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
+      const result = await verifyAdminPasswordAction(password);
       
-      console.log('Login response status:', res.status);
+      console.log('Login result:', result);
       
-      if (res.ok) {
+      if (result.success) {
         setIsAuthenticated(true);
         fetchStats();
       } else {
-        const data = await res.json().catch(() => ({}));
-        setError(data.message || 'Invalid password');
+        setError(result.message || 'Invalid password');
       }
     } catch (error) {
       console.error('Login error:', error);
-      setError('Login failed. Please check your connection.');
+      setError('Login failed. Please try again.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -68,13 +66,8 @@ export default function AdminPage() {
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/stats');
-      if (res.ok) {
-        const data = await res.json();
-        setStats(data);
-      } else {
-        console.error('Failed to fetch stats:', res.status);
-      }
+      const data = await getAdminStatsAction();
+      setStats(data);
     } catch (error) {
       console.error('Failed to fetch stats:', error);
     } finally {
@@ -150,7 +143,7 @@ export default function AdminPage() {
   if (timeRange === 'month') cutoffDate.setDate(now.getDate() - 30);
   if (timeRange === 'year') cutoffDate.setDate(now.getDate() - 365);
 
-  const filteredFiles = stats.files.filter(f => new Date(f.timestamp) >= cutoffDate);
+  const filteredFiles = stats.uploads.filter(f => new Date(f.timestamp) >= cutoffDate);
 
   const filesByDate = filteredFiles.reduce((acc, file) => {
     const date = new Date(file.timestamp).toISOString().split('T')[0];
@@ -164,13 +157,21 @@ export default function AdminPage() {
 
   const buttonChartData = Object.entries(stats.buttonPresses).map(([name, count]) => ({ name, count }));
 
-  const participants = stats.files.map(f => f.participantsCount);
+  const participants = stats.uploads.map(f => f.participantsCount);
   const minParticipants = participants.length ? Math.min(...participants) : 0;
   const maxParticipants = participants.length ? Math.max(...participants) : 0;
   const avgParticipants = participants.length ? (participants.reduce((a, b) => a + b, 0) / participants.length).toFixed(1) : 0;
 
-  const avgTokensPerFile = stats.files.length ? ((stats.tokens.totalInput + stats.tokens.totalOutput) / stats.files.length).toFixed(0) : 0;
-  const avgCostPerFile = stats.files.length ? (stats.tokens.totalCostUsd / stats.files.length).toFixed(4) : 0;
+  // Calculate token costs from geminiUsage
+  const totalInputTokens = stats.geminiUsage.reduce((sum, usage) => sum + usage.inputTokens, 0);
+  const totalOutputTokens = stats.geminiUsage.reduce((sum, usage) => sum + usage.outputTokens, 0);
+  const totalTokens = totalInputTokens + totalOutputTokens;
+  
+  // Gemini 3 Flash pricing: $0.075 per 1M input tokens, $0.30 per 1M output tokens
+  const totalCostUsd = (totalInputTokens * 0.075 / 1000000) + (totalOutputTokens * 0.30 / 1000000);
+  
+  const avgTokensPerFile = stats.uploads.length ? (totalTokens / stats.uploads.length).toFixed(0) : 0;
+  const avgCostPerFile = stats.uploads.length ? (totalCostUsd / stats.uploads.length).toFixed(4) : 0;
 
   return (
     <div className="min-h-screen bg-gray-50 p-8" dir="ltr">
@@ -181,15 +182,15 @@ export default function AdminPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-white p-6 rounded-xl shadow-sm border">
             <h3 className="text-gray-500 text-sm font-medium">Total Files Uploaded</h3>
-            <p className="text-3xl font-bold text-gray-900 mt-2">{stats.files.length}</p>
+            <p className="text-3xl font-bold text-gray-900 mt-2">{stats.uploads.length}</p>
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border">
             <h3 className="text-gray-500 text-sm font-medium">Total Token Cost</h3>
-            <p className="text-3xl font-bold text-green-600 mt-2">${stats.tokens.totalCostUsd.toFixed(2)}</p>
+            <p className="text-3xl font-bold text-green-600 mt-2">${totalCostUsd.toFixed(2)}</p>
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border">
             <h3 className="text-gray-500 text-sm font-medium">Total Tokens Used</h3>
-            <p className="text-3xl font-bold text-blue-600 mt-2">{(stats.tokens.totalInput + stats.tokens.totalOutput).toLocaleString()}</p>
+            <p className="text-3xl font-bold text-blue-600 mt-2">{totalTokens.toLocaleString()}</p>
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border">
             <h3 className="text-gray-500 text-sm font-medium">Avg Cost per File</h3>

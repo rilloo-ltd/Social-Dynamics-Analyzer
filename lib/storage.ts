@@ -89,8 +89,8 @@ export function generateChatCode(text: string): string {
     }
   }
 
-  let first10 = [];
-  let last10 = [];
+  let first10: string[] = [];
+  let last10: string[] = [];
 
   if (contentWords.length <= 20) {
     first10 = contentWords;

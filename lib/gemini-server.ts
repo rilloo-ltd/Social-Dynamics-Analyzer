@@ -87,14 +87,12 @@ export async function serverAnalyzeChatFull(
   hiddenThoughts: string;
 }> {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
-  const model = ai.getGenerativeModel({ 
-    model: "gemini-3-flash-preview",
-    systemInstruction: getSystemInstruction()
-  });
 
   const chatContext = truncateChatForContext(messages, limit);
 
   const prompt = `
+${getSystemInstruction()}
+
 <chat_history>
 ${chatContext}
 </chat_history>
@@ -113,8 +111,12 @@ ${chatContext}
 חשוב: השתמש ב"${targetUser}" במדויק כפי שמופיע כאן.
 `;
 
-  const result = await model.generateContent(prompt);
-  const rawText = result.response.text();
+  const result = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt
+  });
+  
+  const rawText = result.text || "";
   const cleanedText = cleanJson(rawText);
   const parsed = JSON.parse(cleanedText);
 
@@ -128,25 +130,41 @@ ${chatContext}
 
 export async function serverAnalyzeGroupDynamics(
   messages: ChatMessage[],
-  selectedParticipants: string[],
+  selectedParticipants: string[] | undefined,
   limit: number
 ): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
-  const model = ai.getGenerativeModel({ 
-    model: "gemini-3-flash-preview",
-    systemInstruction: getSystemInstruction()
-  });
 
   const chatContext = truncateChatForContext(messages, limit);
-  const participantList = selectedParticipants.join(", ");
+  
+  const prompt = selectedParticipants && selectedParticipants.length > 0
+    ? `
+${getSystemInstruction()}
 
-  const prompt = `
 <chat_history>
 ${chatContext}
 </chat_history>
 
 בצע ניתוח מעמיק של הדינמיקה הקבוצתית.
-התמקד ב-${selectedParticipants.length} המשתתפים הבאים: ${participantList}
+התמקד ב-${selectedParticipants.length} המשתתפים הבאים: ${selectedParticipants.join(", ")}
+
+נתח:
+1. מנהיגות ומבנה כוח
+2. תפקידים קבוצתיים (מנהיג, מתווך, מעורר בעיות)
+3. מתחים וקונפליקטים
+4. תת-קבוצות וברית
+5. דינמיקות תקשורת
+
+החזר טקסט עברית שוטף ומפורט.
+`
+    : `
+${getSystemInstruction()}
+
+<chat_history>
+${chatContext}
+</chat_history>
+
+בצע ניתוח מעמיק של הדינמיקה הקבוצתית של כל המשתתפים בשיחה.
 
 נתח:
 1. מנהיגות ומבנה כוח
@@ -158,50 +176,52 @@ ${chatContext}
 החזר טקסט עברית שוטף ומפורט.
 `;
 
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const result = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt
+  });
+  
+  return result.text || "";
 }
 
 export async function serverAnalyzeRomanticDynamics(
   messages: ChatMessage[],
-  targetUser: string,
   limit: number
 ): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
-  const model = ai.getGenerativeModel({ 
-    model: "gemini-3-flash-preview",
-    systemInstruction: `
-את מטפלת זוגית מנוסה המתמחה בניתוח תקשורת זוגית ודינמיקות רגשיות.
-השתמש בקודי משתתפים (P1, P2 וכו') בדיוק כפי שהם מופיעים.
-`
-  });
 
   const chatContext = truncateChatForContext(messages, limit);
 
   const prompt = `
-<chat_history>
-${chatContext}
-</chat_history>
+  ${getSystemInstruction()}
+  
+  המטרה: ניתוח זוגי/רומנטי (Romantic Dynamics Assessment) של הצ'אט על ידי מטפלת זוגית מוסמכת.
+  הניחי שהמשתתפים בצ'אט הם בני זוג או נמצאים בקשר רומנטי/פוטנציאלי.
 
-בצע ניתוח זוגי מעמיק התמקד ב-${targetUser}.
+  הפורמט הנדרש:
+  הקדמה (אבחון סוג הקשר והשלב בו הוא נמצא), חלק א' (סגנונות תקשורת - מי רודף ומי נמנע?), חלק ב' (צרכים רגשיים - מה כל צד מחפש ולא מקבל?), חלק ג' (ניתוח מריבות - על מה באמת אתם רבים?), חלק ד' (נקודות החוזק של הקשר - מה מחזיק אתכם יחד?), חלק ה' (המלצות מעשיות לשיפור האינטימיות והתקשורת).
+  
+  חשוב:
+  - השתמשי בשפה מקצועית אך אמפתית ("טיפולית"). דברי ישירות לבני-הזוג. אל תחששי להיות ישירה וכנה, אך שמרי על נימוס, אדיבות ואמפתיה.
+  - הדגישי את הכותרות של כל סעיף וכל בולט באמצעות כוכביות כפולות (**כותרת:**). רווח של שורה בין כל נקודה.
+  - ודאי שכל השמות בעברית בלבד (השתמשי ב-P1, P2 וכו' אם השמות אנונימיים).
+  - אל תמציאי עובדות, התבססי רק על הטקסט.
+  
+  <chat_history>
+  ${chatContext}
+  </chat_history>
+  `;
 
-נתח:
-1. סגנונות תקשורת
-2. צרכים רגשיים
-3. דפוסי קונפליקט
-4. רמת אינטימיות רגשית
-5. המלצות לשיפור
-
-החזר טקסט עברית שוטף ומפורט.
-`;
-
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const result = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt
+  });
+  
+  return result.text || "";
 }
 
 export async function serverSummarizeForSharing(analysisText: string): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
-  const model = ai.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
   const prompt = `
 תמצת את הניתוח הבא ל-2-3 משפטים קצרים ותמציתיים המתאימים לשיתוף ברשתות חברתיות:
@@ -211,22 +231,35 @@ ${analysisText}
 החזר רק את התמצית, ללא הקדמה או הסבר.
 `;
 
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const result = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt
+  });
+  
+  return result.text || "";
 }
 
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
-  const model = ai.getGenerativeModel({ model: "gemini-2.5-flash-image" });
 
   const fullPrompt = `Create a Disney Pixar style cartoon illustration: ${prompt}. 
 High quality, vibrant colors, expressive characters, professional animation style.`;
 
-  const result = await model.generateContent(fullPrompt);
+  const result = await ai.models.generateContent({
+    model: "gemini-2.5-flash-image",
+    contents: {
+      parts: [{ text: fullPrompt }]
+    },
+    config: {
+      imageConfig: {
+        aspectRatio: "1:1"
+      }
+    }
+  });
   
   // Extract base64 image from response
-  if (result.response.candidates && result.response.candidates[0]) {
-    const candidate = result.response.candidates[0];
+  if (result.candidates && result.candidates[0]) {
+    const candidate = result.candidates[0];
     if (candidate.content && candidate.content.parts) {
       for (const part of candidate.content.parts) {
         if (part.inlineData && part.inlineData.data) {
@@ -239,7 +272,7 @@ High quality, vibrant colors, expressive characters, professional animation styl
   throw new Error('No image data in response');
 }
 
-interface VisualAssetData {
+export interface VisualAssetData {
   headline: string;
   points: string[];
   visualPrompt: string;
@@ -250,27 +283,42 @@ export async function serverGetVisualAssetData(
   title: string
 ): Promise<VisualAssetData> {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
-  const model = ai.getGenerativeModel({ model:"gemini-3-flash-preview" });
 
   const prompt = `
-מהניתוח הבא:
+Based on the following psychological analysis with the title "${title}", 
+create a visually appealing summary for a social media card.
+
+1. A short, catchy headline (max 5 words) in Hebrew.
+2. Exactly 3 short, impactful bullet points in Hebrew summarizing the key insights. Keep participant names as they appear.
+3. A detailed visual prompt for an image generator in English. The style should be "Disney Pixar cartoon style" featuring friendly, expressive animals that represent the "vibe" of the analysis.
+
+Analysis:
 ${analysisText}
-
-צור נתונים לכרטיס שיתוף ויזואלי:
-
-1. כותרת (headline): משפט קצר ומושך (עד 60 תווים)
-2. נקודות מפתח (points): 3-4 נקודות תמציתיות
-3. תיאור ויזואלי (visualPrompt): תיאור לתמונה ב-Disney Pixar style
-
-החזר JSON תקין:
-{
-  "headline": "...",
-  "points": ["...", "...", "..."],
-  "visualPrompt": "..."
-}
 `;
 
-  const result = await model.generateContent(prompt);
-  const cleanedText = cleanJson(result.response.text());
-  return JSON.parse(cleanedText);
+  const result = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          headline: { type: Type.STRING },
+          points: { type: Type.ARRAY, items: { type: Type.STRING } },
+          visualPrompt: { type: Type.STRING }
+        },
+        required: ["headline", "points", "visualPrompt"]
+      }
+    }
+  });
+
+  const cleanedText = cleanJson(result.text || "{}");
+  const data = JSON.parse(cleanedText);
+  
+  return {
+    headline: data.headline || "הניתוח הפסיכולוגי שלך",
+    points: data.points || [],
+    visualPrompt: data.visualPrompt || "A friendly animal in a bright setting, Pixar style"
+  };
 }
