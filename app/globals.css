@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Custom styles for RTL support and Hebrew typography */
+* {
+  font-family: 'Heebo', sans-serif;
+}
+
+.mono {
+  font-family: 'Share Tech Mono', monospace;
+}

@@ -2,32 +2,31 @@
   "name": "social-dynamics-analyzer",
   "private": true,
   "version": "0.0.0",
-  "type": "module",
   "scripts": {
-    "dev": "tsx server.js",
-    "start": "node server.js",
-    "build": "vite build",
-    "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
     "@google/genai": "^1.41.0",
+    "@tailwindcss/postcss": "^4.0.0",
     "date-fns": "^4.1.0",
-    "express": "^5.2.1",
     "framer-motion": "^12.34.2",
     "jszip": "3.10.1",
     "lucide-react": "^0.575.0",
+    "next": "^16.0.0",
+    "postcss": "^8.4.49",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.13.0",
     "recharts": "^3.7.0",
-    "tsx": "^4.21.0"
+    "server-only": "^0.0.1",
+    "tailwindcss": "^4.0.0"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
     "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "~5.8.2"
   }
 }

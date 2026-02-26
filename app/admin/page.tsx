@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 
@@ -7,7 +9,7 @@ interface Stats {
   buttonPresses: Record<string, number>;
 }
 
-export const AdminPage: React.FC = () => {
+export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
@@ -270,4 +272,4 @@ export const AdminPage: React.FC = () => {
       </div>
     </div>
   );
-};
+}

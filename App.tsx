@@ -1,5 +1,7 @@
+'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { FileUpload } from './components/FileUpload';
 import { parseChatFile } from './services/chatParser';
 import { ChatMessage, ParsedChat, AnalysisType, CardColor, UserTier } from './types';
@@ -7,9 +9,6 @@ import { analyzeChatFull, analyzeGroupDynamics, analyzeRomanticDynamics, getChat
 import { AnalysisCard } from './components/AnalysisCard';
 import { AnalysisModal } from './components/AnalysisModal';
 import { GroupParticipantSelector } from './components/GroupParticipantSelector';
-
-import { Routes, Route, useNavigate } from 'react-router-dom';
-import { AdminPage } from './pages/Admin';
 import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, HelpCircle, FileText } from 'lucide-react';
 
 export const LOGO_URL = "https://madaduhcom.wpcomstaging.com/wp-content/uploads/2026/02/logo-psychologist.png";
@@ -193,7 +192,7 @@ const HowToExport: React.FC = () => {
 };
 
 const MainApp: React.FC = () => {
-  const navigate = useNavigate();
+  const router = useRouter();
   const [chatData, setChatData] = useState<ParsedChat | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [activeAnalysisType, setActiveAnalysisType] = useState<AnalysisType | null>(null);
@@ -608,7 +607,7 @@ const MainApp: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
         <button 
-          onClick={() => navigate('/admin')} 
+          onClick={() => router.push('/admin')} 
           className="fixed top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100"
           title="Admin Login"
         >
@@ -639,7 +638,7 @@ const MainApp: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 overflow-x-hidden relative">
         <button 
-          onClick={() => navigate('/admin')} 
+          onClick={() => router.push('/admin')} 
           className="absolute top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100"
           title="Admin Login"
         >
@@ -800,7 +799,7 @@ const MainApp: React.FC = () => {
       <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
          <div className="flex items-center gap-3"><img src={LOGO_URL} className="w-10 h-10 rounded-full" /><h1 className="font-black text-slate-800 text-xl hidden md:block">הפסיכולוגית</h1></div>
          <div className="flex items-center gap-4">
-            <button onClick={() => navigate('/admin')} className="text-slate-400 hover:text-slate-600 transition-colors" title="Admin Login"><Lock className="w-4 h-4" /></button>
+            <button onClick={() => router.push('/admin')} className="text-slate-400 hover:text-slate-600 transition-colors" title="Admin Login"><Lock className="w-4 h-4" /></button>
             <button onClick={() => setChatData(null)} className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors">החלף צ'אט</button>
          </div>
       </div>
@@ -912,6 +911,9 @@ const MainApp: React.FC = () => {
     </div>
   );
 };
+
+// Export MainApp for Next.js App Router
+export { MainApp };
 
 export const App: React.FC = () => {
   return (
