@@ -3,6 +3,7 @@
 import 'server-only';
 import { GoogleGenAI, Type } from "@google/genai";
 import { ChatMessage } from "@/types";
+import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 
 const getSystemInstruction = () => `
 את פסיכולוגית חברתית מומחית בעלת ניסיון רב בניתוח דינמיקה קבוצתית, תקשורת בין-אישית ופסיכולוגיה התנהגותית.
@@ -68,12 +69,29 @@ const cleanJson = (text: string): string => {
   return text.replace(/```json\s*|\s*```/g, "").replace(/```/g, "").trim();
 };
 
-const getApiKey = (): string => {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY environment variable is not set');
+const getApiKey = async (): Promise<string> => {
+  if (process.env.GEMINI_API_KEY) {
+    return process.env.GEMINI_API_KEY;
   }
-  return apiKey;
+
+  if (process.env.NODE_ENV === 'development') {
+    const apiKey = process.env.API_KEY;
+    if(apiKey) return apiKey;
+  }
+
+  try {
+    const client = new SecretManagerServiceClient();
+    const name = 'projects/social-analyzer-24750033-dc53d/secrets/GEMINI_API_KEY/versions/latest';
+    const [version] = await client.accessSecretVersion({ name });
+    const payload = version.payload?.data?.toString();
+    if (payload) {
+      return payload;
+    }
+    throw new Error('Secret payload is empty');
+  } catch (error) {
+    console.error('Failed to access secret from Secret Manager:', error);
+    throw new Error('Could not fetch GEMINI_API_KEY from Secret Manager');
+  }
 };
 
 export async function serverAnalyzeChatFull(
@@ -86,7 +104,7 @@ export async function serverAnalyzeChatFull(
   improvement: string;
   hiddenThoughts: string;
 }> {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
   const chatContext = truncateChatForContext(messages, limit);
 
@@ -133,7 +151,7 @@ export async function serverAnalyzeGroupDynamics(
   selectedParticipants: string[] | undefined,
   limit: number
 ): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
   const chatContext = truncateChatForContext(messages, limit);
   
@@ -188,7 +206,7 @@ export async function serverAnalyzeRomanticDynamics(
   messages: ChatMessage[],
   limit: number
 ): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
   const chatContext = truncateChatForContext(messages, limit);
 
@@ -221,7 +239,7 @@ export async function serverAnalyzeRomanticDynamics(
 }
 
 export async function serverSummarizeForSharing(analysisText: string): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
   const prompt = `
 תמצת את הניתוח הבא ל-2-3 משפטים קצרים ותמציתיים המתאימים לשיתוף ברשתות חברתיות:
@@ -240,7 +258,7 @@ ${analysisText}
 }
 
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
   const fullPrompt = `Create a Disney Pixar style cartoon illustration: ${prompt}. 
 High quality, vibrant colors, expressive characters, professional animation style.`;
@@ -282,7 +300,7 @@ export async function serverGetVisualAssetData(
   analysisText: string,
   title: string
 ): Promise<VisualAssetData> {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
   const prompt = `
 Based on the following psychological analysis with the title "${title}", 
