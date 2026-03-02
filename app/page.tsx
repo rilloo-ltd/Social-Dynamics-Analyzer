@@ -23,6 +23,7 @@ import {
   LOADING_MESSAGES_PHASE_2,
   LOADING_MESSAGES_PHASE_3
 } from '@/lib/constants';
+import AuthDetails from '@/components/AuthDetails';
 
 export default function HomePage() {
   const router = useRouter();
@@ -38,8 +39,7 @@ export default function HomePage() {
   const [displayedMessage, setDisplayedMessage] = useState<string>("");
   const [isGroupSelectorOpen, setIsGroupSelectorOpen] = useState(false);
   const [selectedTier, setSelectedTier] = useState<UserTier>('free');
-  const [loadingMessages, setLoadingMessages] = useState<{phase1: string[], phase2: string[], phase3: string[]}>({
-    phase1: LOADING_MESSAGES_PHASE_1,
+  const [loadingMessages, setLoadingMessages] = useState<{phase1: string[], phase2: string[], phase3: string[]}>({    phase1: LOADING_MESSAGES_PHASE_1,
     phase2: LOADING_MESSAGES_PHASE_2,
     phase3: LOADING_MESSAGES_PHASE_3
   });
@@ -433,6 +433,7 @@ export default function HomePage() {
   if (!chatData) {
     return (
       <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 overflow-x-hidden relative">
+        <AuthDetails />
         <button 
           onClick={() => router.push('/admin')} 
           className="absolute top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100"

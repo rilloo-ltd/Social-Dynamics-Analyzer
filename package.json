@@ -12,6 +12,7 @@
     "@google/genai": "^1.41.0",
     "@tailwindcss/postcss": "^4.0.0",
     "date-fns": "^4.1.0",
+    "firebase": "^12.10.0",
     "framer-motion": "^12.34.2",
     "jszip": "3.10.1",
     "lucide-react": "^0.575.0",
