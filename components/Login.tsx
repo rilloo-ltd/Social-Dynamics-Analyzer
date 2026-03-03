@@ -1,23 +1,13 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react';
-import { signInWithEmail, signInWithGoogle, handleRedirectResult } from '../lib/auth';
+import React, { useState } from 'react';
+import { signInWithEmail, signInWithGoogle } from '../lib/auth';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const checkRedirectResult = async () => {
-      const { error } = await handleRedirectResult();
-      if (error) {
-        setError(error);
-      }
-    };
-    checkRedirectResult();
-  }, []);
 
   const handleEmailSignIn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

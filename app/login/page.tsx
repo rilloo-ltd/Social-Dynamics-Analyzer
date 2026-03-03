@@ -9,11 +9,15 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
     const { user, error } = await signInWithEmail(email, password);
+    setLoading(false);
     if (error) {
       setError(error);
     } else {
@@ -22,10 +26,13 @@ export default function LoginPage() {
   };
 
   const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError(null);
     const { user, error } = await signInWithGoogle();
+    setLoading(false);
     if (error) {
       setError(error);
-    } else {
+    } else if (user) {
       router.push('/');
     }
   };
@@ -41,19 +48,33 @@ export default function LoginPage() {
             value={email} 
             onChange={(e) => setEmail(e.target.value)} 
             placeholder="Email" 
-            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            disabled={loading}
+            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
           />
           <input 
             type="password" 
             value={password} 
             onChange={(e) => setPassword(e.target.value)} 
             placeholder="Password" 
-            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            disabled={loading}
+            className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
           />
-          <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition-colors">Sign In with Email</button>
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Signing in...' : 'Sign In with Email'}
+          </button>
         </form>
         <div className="my-4 text-center text-slate-500">OR</div>
-        <button onClick={handleGoogleSignIn} className="w-full bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition-colors">Sign In with Google</button>
+        <button 
+          onClick={handleGoogleSignIn} 
+          disabled={loading}
+          className="w-full bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? 'Signing in...' : 'Sign In with Google'}
+        </button>
         <p className="text-center mt-4">
           Don't have an account? <a href="/signup" className="text-indigo-600 hover:underline">Sign Up</a>
         </p>

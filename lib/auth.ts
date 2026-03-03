@@ -5,8 +5,7 @@ import {
     signInWithEmailAndPassword, 
     signOut, 
     GoogleAuthProvider, 
-    signInWithRedirect,
-    getRedirectResult,
+    signInWithPopup,
     User,
     AuthError
 } from "firebase/auth";
@@ -39,26 +38,13 @@ export const signInWithEmail = async (email: string, password: string): Promise<
 export const signInWithGoogle = async (): Promise<AuthResult> => {
   const provider = new GoogleAuthProvider();
   try {
-    await signInWithRedirect(auth, provider);
-    return {};
+    const result = await signInWithPopup(auth, provider);
+    return { user: result.user };
   } catch (error) {
     const authError = error as AuthError;
     return { error: authError.message };
   }
 };
-
-export const handleRedirectResult = async (): Promise<AuthResult> => {
-    try {
-        const result = await getRedirectResult(auth);
-        if (result) {
-            return { user: result.user };
-        }
-        return { user: null };
-    } catch (error) {
-        const authError = error as AuthError;
-        return { error: authError.message };
-    }
-}
 
 export const logOut = async (): Promise<{error?: string}> => {
   try {
