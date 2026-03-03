@@ -235,6 +235,10 @@ export default function HomePage() {
             result = await serverAnalyzeGroupDynamics(chatData.anonymizedMessages, participants, limit);
             // Update cache locally so subsequent calls use it
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
+            // Persist to storage
+            if (chatCode) {
+                updateChatCacheAction(chatCode, cacheKey, result).catch(e => console.error('Failed to cache group dynamics', e));
+            }
         }
 
         const deanonymize = (t: string) => {
@@ -269,6 +273,10 @@ export default function HomePage() {
         } else {
             result = await serverAnalyzeRomanticDynamics(chatData.anonymizedMessages, limit);
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
+            // Persist to storage
+            if (chatCode) {
+                updateChatCacheAction(chatCode, cacheKey, result).catch(e => console.error('Failed to cache romantic dynamics', e));
+            }
         }
 
         const deanonymize = (t: string) => {
@@ -312,6 +320,10 @@ export default function HomePage() {
           rawResult = await serverAnalyzeChatFull(chatData.anonymizedMessages, anonUser, limit);
           // Update cache locally
           setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: rawResult, timestamp: new Date().toISOString() } }));
+          // Persist to storage
+          if (chatCode) {
+              updateChatCacheAction(chatCode, cacheKey, rawResult).catch(e => console.error('Failed to cache full analysis', e));
+          }
       }
       
       const deanonymize = (t: string) => {
@@ -325,12 +337,13 @@ export default function HomePage() {
         return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
       };
 
-      const finalData: Record<string, string> = {};
-      Object.entries(rawResult).forEach(([key, val]) => {
-        finalData[key] = PRIVACY_DISCLAIMER_TEXT + deanonymize(val);
-      });
-      // Map 'advice' to IMPROVEMENT key for UI config mapping
-      finalData[AnalysisType.IMPROVEMENT] = finalData['advice'];
+      // Map server response keys to AnalysisType enum values
+      const finalData: Record<string, string> = {
+        [AnalysisType.PERSONALITY]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.personality || ""),
+        [AnalysisType.OTHERS_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.othersThoughts || ""),
+        [AnalysisType.IMPROVEMENT]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.improvement || ""),
+        [AnalysisType.HIDDEN_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.hiddenThoughts || ""),
+      };
 
       setUserAnalysisData(prev => ({ ...prev, [selectedUser]: finalData }));
     } catch (e: any) { alert(e.message); setActiveAnalysisType(null); }
