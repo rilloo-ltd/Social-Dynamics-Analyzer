@@ -8,6 +8,15 @@ export async function uploadChatAction(text: string, forceNew?: boolean) {
     throw new Error('No text provided');
   }
 
+  // Log payload size for debugging
+  const sizeInBytes = Buffer.byteLength(text, 'utf8');
+  const sizeInKB = (sizeInBytes / 1024).toFixed(2);
+  console.log(`[uploadChatAction] Payload size: ${sizeInKB} KB`);
+
+  if (sizeInBytes > 3 * 1024 * 1024) { // 3MB limit
+    throw new Error(`Chat text is too large (${sizeInKB} KB). Maximum allowed is 3 MB.`);
+  }
+
   const code = generateChatCode(text);
   if (!code) {
     throw new Error('Could not generate chat code (empty content)');
@@ -29,6 +38,7 @@ export async function uploadChatAction(text: string, forceNew?: boolean) {
 
   writeChats(chats);
 
+  console.log(`[uploadChatAction] Chat stored successfully with code: ${code}`);
   return { success: true, code, existingOutputs: {} };
 }
 

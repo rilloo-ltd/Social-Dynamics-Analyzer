@@ -116,7 +116,15 @@ export default function HomePage() {
         
         return data.code;
       }
-    } catch (e) { console.error("Store chat failed", e); }
+    } catch (e: any) { 
+      console.error("Store chat failed", e);
+      if (e.message && e.message.includes('too large')) {
+        alert(`הקובץ גדול מדי (${e.message}). נסה להעלות קובץ קטן יותר או בחר רמת משתמש נמוכה יותר.`);
+      } else {
+        alert(`שגיאה בשמירת הצ'אט: ${e.message || 'שגיאה לא ידועה'}`);
+      }
+      throw e;
+    }
     return null;
   };
 
@@ -196,8 +204,13 @@ export default function HomePage() {
       setSelectedUser(null);
       setUserAnalysisData({});
       setActiveAnalysisType(null);
-    } catch (error) {
-      alert("אירעה שגיאה בעיבוד הקובץ.");
+    } catch (error: any) {
+      console.error("Error in handleFileLoaded:", error);
+      if (error.message) {
+        alert(`שגיאה: ${error.message}`);
+      } else {
+        alert("אירעה שגיאה בעיבוד הקובץ. אנא נסה שוב או בחר קובץ קטן יותר.");
+      }
     } finally {
       setIsProcessingFile(false);
     }

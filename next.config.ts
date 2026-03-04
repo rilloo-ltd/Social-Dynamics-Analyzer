@@ -11,6 +11,11 @@ const nextConfig: NextConfig = {
   experimental: {
     // Enable Turbopack filesystem caching for faster dev startup
     turbopackFileSystemCacheForDev: true,
+    
+    // Increase server action body size limit for large chat files
+    serverActions: {
+      bodySizeLimit: '15mb', // Default is 1mb, increase for large ZIP files
+    },
   },
 
   // Image optimization
