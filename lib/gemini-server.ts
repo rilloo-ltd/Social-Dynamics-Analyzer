@@ -312,6 +312,10 @@ High quality, vibrant colors, expressive characters, professional animation styl
       response_format: "b64_json"
     });
 
+    if (!response.data || response.data.length === 0) {
+      throw new Error('No image data returned from DALL-E');
+    }
+
     const imageData = response.data[0].b64_json;
     
     if (!imageData) {
