@@ -12,6 +12,7 @@ import { AnalysisCard } from '@/components/AnalysisCard';
 import { AnalysisModal } from '@/components/AnalysisModal';
 import { GroupParticipantSelector } from '@/components/GroupParticipantSelector';
 import { HowToExport } from '@/components/HowToExport';
+import { UpgradeModal } from '@/components/UpgradeModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon } from '@/components/Icons';
 import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText } from 'lucide-react';
 import { 
@@ -24,6 +25,8 @@ import {
   LOADING_MESSAGES_PHASE_3
 } from '@/lib/constants';
 import AuthDetails from '@/components/AuthDetails';
+import { auth } from '@/lib/firebase';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 export default function HomePage() {
   const router = useRouter();
@@ -52,6 +55,10 @@ export default function HomePage() {
   const [chatCode, setChatCode] = useState<string | null>(null);
   const [cachedOutputs, setCachedOutputs] = useState<Record<string, any>>({});
   const [isNewSessionMode, setIsNewSessionMode] = useState<boolean>(false);
+  const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: 2 });
 
   useEffect(() => {
     fetch('/api/messages')
@@ -64,11 +71,20 @@ export default function HomePage() {
       .catch(err => console.error("Failed to load messages", err));
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      setAuthChecking(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
   const isAnalyzing = loading;
 
   const logUpload = async (participantsCount: number, anonymizedText: string, tokenCount: number, chatCode?: string | null) => {
+    if (!authUser) return;
     try {
-      const data = await logUploadAction(participantsCount, tokenCount);
+      const data = await logUploadAction(authUser.uid, participantsCount, tokenCount);
       setSessionId(data.sessionId);
     } catch (e) { console.error("Log upload failed", e); }
   };
@@ -80,29 +96,60 @@ export default function HomePage() {
   };
   
   const logShare = async (type: string, platform: string) => {
-    if (!sessionId) return;
+    if (!sessionId || !authUser) return;
     try {
-        await logShareAction(sessionId, type, platform);
+        await logShareAction(authUser.uid, sessionId, type, platform);
     } catch (e) { console.error("Log share failed", e); }
   };
 
   const logImageGeneration = async () => {
-    if (!sessionId) return;
+    if (!sessionId || !authUser) return;
     try {
-        await logImageGenerationAction(sessionId, 'generated_cartoon_image');
+        await logImageGenerationAction(authUser.uid, sessionId, 'generated_cartoon_image');
     } catch (e) { console.error("Log image generation failed", e); }
   };
 
   const logFeedback = async (rating: number, comment: string) => {
-    if (!sessionId) return;
+    if (!sessionId || !authUser) return;
     try {
-        await logFeedbackAction(sessionId, rating, comment);
+        await logFeedbackAction(authUser.uid, sessionId, rating, comment);
     } catch (e) { console.error("Log feedback failed", e); }
   };
 
-  const storeChat = async (text: string) => {
+  const handleUpgrade = async (tier: 'basic' | 'super') => {
+    if (!authUser) return;
+    
+    const tierNames = {
+      basic: 'מנוי בסיסי (10 ניתוחים ביום)',
+      super: 'מנוי-על (50 ניתוחים ביום)'
+    };
+    
     try {
-      const data = await uploadChatAction(text, isNewSessionMode);
+      const response = await fetch('/api/reset-limit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: authUser.uid, tier })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setShowUpgradeModal(false);
+        alert(`מעולה! שודרגת ל${tierNames[tier]}! המגבלה אופסה ואתה יכול להמשיך לנתח צ׳אטים! 🎉`);
+        // Trigger file upload again if needed
+      } else {
+        alert('אירעה שגיאה. נסה שוב.');
+      }
+    } catch (error) {
+      console.error('Upgrade error:', error);
+      alert('אירעה שגיאה בשדרוג.');
+    }
+  };
+
+  const storeChat = async (text: string) => {
+    if (!authUser) throw new Error('User not authenticated');
+    try {
+      const data = await uploadChatAction(authUser.uid, text, isNewSessionMode);
       if (data.code) {
         setChatCode(data.code);
         console.log("Chat stored with code:", data.code);
@@ -129,6 +176,37 @@ export default function HomePage() {
   };
 
   const handleFileLoaded = async (text: string) => {
+    // Check if user is logged in
+    if (!authUser) {
+      router.push('/login');
+      return;
+    }
+
+    // Check daily upload limit
+    try {
+      const checkResponse = await fetch('/api/track-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: authUser.uid, action: 'check' })
+      });
+      
+      const checkData = await checkResponse.json();
+      
+      if (!checkData.canUpload) {
+        console.log('Upload limit reached, showing upgrade modal', checkData);
+        setUploadLimitData({
+          currentCount: checkData.currentCount,
+          maxUploads: checkData.maxUploads
+        });
+        setShowUpgradeModal(true);
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking upload limit:', error);
+      alert('אירעה שגיאה בבדיקת המגבלה היומית.');
+      return;
+    }
+
     setIsProcessingFile(true);
     setProcessingProgress(0);
     setHighlights([]);
@@ -187,6 +265,17 @@ export default function HomePage() {
 
       const code = await storeChat(formattedAnonymizedText);
       await logUpload(parsed.participants.length, formattedAnonymizedText, estimatedTokens, code);
+
+      // Increment upload count after successful upload
+      try {
+        await fetch('/api/track-upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: authUser.uid, action: 'increment' })
+        });
+      } catch (error) {
+        console.error('Error incrementing upload count:', error);
+      }
 
       const deanonymize = (t: string) => {
         let txt = t || "";
@@ -249,8 +338,8 @@ export default function HomePage() {
             // Update cache locally so subsequent calls use it
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
             // Persist to storage
-            if (chatCode) {
-                updateChatCacheAction(chatCode, cacheKey, result).catch(e => console.error('Failed to cache group dynamics', e));
+            if (chatCode && authUser) {
+                updateChatCacheAction(authUser.uid, chatCode, cacheKey, result).catch(e => console.error('Failed to cache group dynamics', e));
             }
         }
 
@@ -287,8 +376,8 @@ export default function HomePage() {
             result = await serverAnalyzeRomanticDynamics(chatData.anonymizedMessages, limit);
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
             // Persist to storage
-            if (chatCode) {
-                updateChatCacheAction(chatCode, cacheKey, result).catch(e => console.error('Failed to cache romantic dynamics', e));
+            if (chatCode && authUser) {
+                updateChatCacheAction(authUser.uid, chatCode, cacheKey, result).catch(e => console.error('Failed to cache romantic dynamics', e));
             }
         }
 
@@ -334,8 +423,8 @@ export default function HomePage() {
           // Update cache locally
           setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: rawResult, timestamp: new Date().toISOString() } }));
           // Persist to storage
-          if (chatCode) {
-              updateChatCacheAction(chatCode, cacheKey, rawResult).catch(e => console.error('Failed to cache full analysis', e));
+          if (chatCode && authUser) {
+              updateChatCacheAction(authUser.uid, chatCode, cacheKey, rawResult).catch(e => console.error('Failed to cache full analysis', e));
           }
       }
       
@@ -430,7 +519,7 @@ export default function HomePage() {
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
         <button 
           onClick={() => router.push('/admin')} 
-          className="fixed top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100"
+          className="fixed top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer"
           title="Admin Login"
         >
           <Lock className="w-4 h-4" />
@@ -452,6 +541,14 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+
+        <UpgradeModal
+          isOpen={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          onUpgrade={handleUpgrade}
+          currentCount={uploadLimitData.currentCount}
+          maxUploads={uploadLimitData.maxUploads}
+        />
       </div>
     );
   }
@@ -462,14 +559,14 @@ export default function HomePage() {
         <AuthDetails />
         <button 
           onClick={() => router.push('/admin')} 
-          className="absolute top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100"
+          className="absolute top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer"
           title="Admin Login"
         >
           <Lock className="w-4 h-4" />
         </button>
         <button 
           onClick={() => setIsNewSessionMode(!isNewSessionMode)} 
-          className={`absolute top-4 left-14 p-2 transition-colors z-50 opacity-50 hover:opacity-100 ${isNewSessionMode ? 'text-indigo-600 bg-indigo-50 rounded-full' : 'text-slate-400 hover:text-slate-600'}`}
+          className={`absolute top-4 left-14 p-2 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer ${isNewSessionMode ? 'text-indigo-600 bg-indigo-50 rounded-full' : 'text-slate-400 hover:text-slate-600'}`}
           title={isNewSessionMode ? "New Session Mode: ON" : "New Session Mode: OFF"}
         >
           <FileText className="w-4 h-4" />
@@ -537,7 +634,7 @@ export default function HomePage() {
                     <button
                       key={key}
                       onClick={() => setSelectedTier(key)}
-                      className={`relative p-6 rounded-2xl border-2 transition-all duration-300 flex flex-col items-center gap-4 group ${
+                      className={`relative p-6 rounded-2xl border-2 transition-all duration-300 flex flex-col items-center gap-4 group cursor-pointer ${
                         selectedTier === key 
                           ? `${config.color.split(' ')[0]} ${config.color.split(' ')[1]} ring-4 ring-offset-2 ring-teal-100 scale-105 shadow-xl border-teal-200` 
                           : 'bg-white border-slate-100 hover:border-teal-200 hover:bg-teal-50/30 hover:shadow-lg'
@@ -613,6 +710,14 @@ export default function HomePage() {
           @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
           .animate-fadeIn { animation: fadeIn 0.8s ease-out both; }
         `}</style>
+
+        <UpgradeModal
+          isOpen={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          onUpgrade={handleUpgrade}
+          currentCount={uploadLimitData.currentCount}
+          maxUploads={uploadLimitData.maxUploads}
+        />
       </div>
     );
   }
@@ -622,14 +727,14 @@ export default function HomePage() {
       <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
          <div className="flex items-center gap-3"><img src={LOGO_URL} className="w-10 h-10 rounded-full" /><h1 className="font-black text-slate-800 text-xl hidden md:block">הפסיכולוגית</h1></div>
          <div className="flex items-center gap-4">
-            <button onClick={() => router.push('/admin')} className="text-slate-400 hover:text-slate-600 transition-colors" title="Admin Login"><Lock className="w-4 h-4" /></button>
-            <button onClick={() => setChatData(null)} className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors">החלף צ'אט</button>
+            <button onClick={() => router.push('/admin')} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer" title="Admin Login"><Lock className="w-4 h-4" /></button>
+            <button onClick={() => setChatData(null)} className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer">החלף צ'אט</button>
          </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="mb-12 text-center">
-           <button onClick={() => { setIsGroupSelectorOpen(true); logButton('GROUP_ANALYSIS_INIT'); }} className="group relative w-full max-w-4xl block mx-auto bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all duration-300">
+           <button onClick={() => { setIsGroupSelectorOpen(true); logButton('GROUP_ANALYSIS_INIT'); }} className="group relative w-full max-w-4xl block mx-auto bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer">
               <div className="relative z-10 flex items-center justify-between text-white">
                  <div className="flex items-center gap-4">
                     <div className="bg-white/20 p-3 rounded-xl"><GroupIcon className="w-8 h-8" /></div>
@@ -646,7 +751,7 @@ export default function HomePage() {
              className={`group relative w-full max-w-4xl block mx-auto rounded-2xl p-6 shadow-xl transition-all duration-300 mt-4 ${
                chatData.participants.length !== 2 
                  ? 'bg-slate-100 cursor-not-allowed opacity-70 border-2 border-slate-200' 
-                 : 'bg-gradient-to-r from-pink-500 to-rose-500 hover:shadow-2xl'
+                 : 'bg-gradient-to-r from-pink-500 to-rose-500 hover:shadow-2xl cursor-pointer'
              }`}
            >
               <div className="relative z-10 flex items-center justify-between">
@@ -674,7 +779,7 @@ export default function HomePage() {
            <h2 className="text-2xl font-bold text-slate-800 mt-12 mb-6">או בחר משתתף ספציפי לניתוח אישי</h2>
            <div className="flex flex-wrap justify-center gap-3">
              {chatData.participants.map(p => (
-               <button key={p} onClick={() => setSelectedUser(p === selectedUser ? null : p)} className={`px-6 py-3 rounded-full font-bold transition-all ${selectedUser === p ? 'bg-slate-900 text-white scale-105' : 'bg-white text-slate-700 hover:bg-slate-100 border'}`}>{p}</button>
+               <button key={p} onClick={() => setSelectedUser(p === selectedUser ? null : p)} className={`px-6 py-3 rounded-full font-bold transition-all cursor-pointer ${selectedUser === p ? 'bg-slate-900 text-white scale-105' : 'bg-white text-slate-700 hover:bg-slate-100 border'}`}>{p}</button>
              ))}
            </div>
         </div>
@@ -712,6 +817,7 @@ export default function HomePage() {
         onLogImageGeneration={logImageGeneration}
         onLogFeedback={logFeedback}
         chatCode={chatCode}
+        userId={authUser?.uid || null}
       />
 
       {isGroupSelectorOpen && (
@@ -731,6 +837,14 @@ export default function HomePage() {
           onConfirm={(selected) => { setIsGroupSelectorOpen(false); triggerAnalysis(AnalysisType.GROUP_DYNAMICS, selected); }}
         />
       )}
+
+      <UpgradeModal
+        isOpen={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        onUpgrade={handleUpgrade}
+        currentCount={uploadLimitData.currentCount}
+        maxUploads={uploadLimitData.maxUploads}
+      />
     </div>
   );
 }

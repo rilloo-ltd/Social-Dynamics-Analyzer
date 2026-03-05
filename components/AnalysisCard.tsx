@@ -132,7 +132,7 @@ export const AnalysisCard: React.FC<AnalysisCardProps> = ({
         p-8 rounded-[2rem] transition-all duration-300 ease-out
         bg-white border-2 ${theme.border}
         shadow-lg hover:shadow-xl ${theme.shadow}
-        hover:-translate-y-1.5
+        hover:-translate-y-1.5 cursor-pointer
         flex flex-col gap-5
         animate-fadeInUp
       `}

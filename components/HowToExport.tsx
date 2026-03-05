@@ -10,7 +10,7 @@ export const HowToExport: React.FC = () => {
     <div className="max-w-3xl mx-auto mb-12">
       <button 
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full bg-white/80 backdrop-blur-sm hover:bg-white border-2 border-teal-100 hover:border-teal-300 rounded-2xl p-4 flex items-center justify-between transition-all shadow-sm hover:shadow-md group"
+        className="w-full bg-white/80 backdrop-blur-sm hover:bg-white border-2 border-teal-100 hover:border-teal-300 rounded-2xl p-4 flex items-center justify-between transition-all shadow-sm hover:shadow-md group cursor-pointer"
       >
         <div className="flex items-center gap-3">
           <div className="bg-teal-100 text-teal-600 p-2 rounded-full group-hover:scale-110 transition-transform">

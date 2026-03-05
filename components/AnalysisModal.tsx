@@ -19,6 +19,7 @@ interface AnalysisModalProps {
   onLogImageGeneration?: () => void;
   onLogFeedback?: (rating: number, comment: string) => void;
   chatCode?: string | null;
+  userId?: string | null;
 }
 
 const LOGO_URL = "https://madaduhcom.wpcomstaging.com/wp-content/uploads/2026/02/logo-psychologist.png";
@@ -176,7 +177,7 @@ const MarkdownRenderer = ({ text }: { text: string }) => {
 };
 
 export const AnalysisModal: React.FC<AnalysisModalProps> = ({ 
-  isOpen, onClose, title, icon, content, loading, loadingHighlight, loadingMessage, color, onShare, onLogImageGeneration, onLogFeedback, chatCode 
+  isOpen, onClose, title, icon, content, loading, loadingHighlight, loadingMessage, color, onShare, onLogImageGeneration, onLogFeedback, chatCode, userId 
 }) => {
   const styles = colorStyles[color] || colorStyles.blue;
   const [shareHubState, setShareHubState] = useState<'closed' | 'version' | 'platform' | 'visual_preview'>('closed');
@@ -289,8 +290,8 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
       setIsSummarizing(true);
       try {
         const summary = await serverSummarizeForSharing(displayContent);
-        if (chatCode) {
-          updateChatCacheAction(chatCode, 'summary_for_sharing', summary).catch(e => console.error('Failed to log summary', e));
+        if (chatCode && userId) {
+          updateChatCacheAction(userId, chatCode, 'summary_for_sharing', summary).catch(e => console.error('Failed to log summary', e));
         }
         setSelectedShareText(constructShareableText(summary));
         setShareHubState('platform');
@@ -300,8 +301,8 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
       setIsSummarizing(true);
       try {
         const vData = await serverGetVisualAssetData(displayContent, title);
-        if (chatCode) {
-          updateChatCacheAction(chatCode, 'visual_asset_data', vData).catch(e => console.error('Failed to log visual data', e));
+        if (chatCode && userId) {
+          updateChatCacheAction(userId, chatCode, 'visual_asset_data', vData).catch(e => console.error('Failed to log visual data', e));
         }
         setVisualData(vData);
         const url = await serverGenerateCartoonImage(vData.visualPrompt);
@@ -429,7 +430,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity animate-fadeIn" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity animate-fadeIn cursor-pointer" onClick={onClose} />
       <div className="relative bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-4xl flex flex-col overflow-hidden animate-slideUp">
         <div className={`p-6 flex items-center justify-between shrink-0 shadow-md z-10 ${styles.headerBg} ${styles.headerText}`}>
            <div className="flex items-center gap-4">
@@ -439,7 +440,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
               </div>
               <h2 className="text-2xl md:text-3xl font-bold tracking-tight">{title}</h2>
            </div>
-           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/20 transition-colors">
+           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/20 transition-colors cursor-pointer">
              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
            </button>
         </div>
@@ -524,7 +525,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                                 />
                                 <button 
                                     onClick={handleFeedbackSubmit}
-                                    className="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-1"
+                                    className="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-1 cursor-pointer"
                                 >
                                     שלח משוב
                                 </button>
@@ -539,7 +540,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                 )}
 
                 <div className="mt-8 flex justify-center">
-                   <button onClick={() => setShareHubState('version')} className="px-12 py-4 rounded-full font-bold bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-xl">שתף תוצאות</button>
+                   <button onClick={() => setShareHubState('version')} className="px-12 py-4 rounded-full font-bold bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-xl cursor-pointer">שתף תוצאות</button>
                 </div>
              </div>
            )}
@@ -547,24 +548,24 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
 
         {shareHubState !== 'closed' && (
           <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-fadeIn overflow-y-auto">
-            <button onClick={() => setShareHubState('closed')} className="absolute top-6 left-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+            <button onClick={() => setShareHubState('closed')} className="absolute top-6 left-6 p-2 rounded-full bg-slate-100 hover:bg-slate-200 cursor-pointer"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
             
             {shareHubState === 'version' ? (
                 <div className="w-full max-w-lg text-center space-y-6">
                     <h3 className="text-3xl font-black text-slate-800">איך תרצו לשתף?</h3>
                     <div className="grid grid-cols-1 gap-3">
-                        <button onClick={() => handleVersionSelect('original')} className="p-4 bg-slate-50 border rounded-2xl text-right flex justify-between items-center"><span className="font-bold">הניתוח המלא</span><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
-                        <button onClick={() => handleVersionSelect('abbreviated')} className="p-4 bg-slate-50 border rounded-2xl text-right flex justify-between items-center"><span className="font-bold">גרסה מקוצרת</span><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
+                        <button onClick={() => handleVersionSelect('original')} className="p-4 bg-slate-50 border rounded-2xl text-right flex justify-between items-center cursor-pointer"><span className="font-bold">הניתוח המלא</span><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
+                        <button onClick={() => handleVersionSelect('abbreviated')} className="p-4 bg-slate-50 border rounded-2xl text-right flex justify-between items-center cursor-pointer"><span className="font-bold">גרסה מקוצרת</span><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
                         <div className="h-px bg-slate-100 my-2"></div>
-                        <button onClick={() => handleVersionSelect('cartoon_image')} disabled={isSummarizing} className="p-4 bg-amber-50 border rounded-2xl text-right flex justify-between items-center relative">
+                        <button onClick={() => handleVersionSelect('cartoon_image')} disabled={isSummarizing} className="p-4 bg-amber-50 border rounded-2xl text-right flex justify-between items-center relative cursor-pointer">
                           {isSummarizing && <div className="absolute inset-0 bg-white/60 flex items-center justify-center"><div className="h-4 w-4 border-2 border-amber-500 border-t-transparent animate-spin rounded-full"></div></div>}
-                          <span className="font-bold">כרטיסיית קריקטורה (Zootopia Style)</span>
+                          <span className="font-bold">מי אני - בתמונה</span>
                         </button>
                     </div>
                 </div>
             ) : shareHubState === 'visual_preview' ? (
                 <div className="w-full max-w-lg text-center space-y-6">
-                    <h3 className="text-2xl font-black text-slate-800">הנה הקריקטורה שלך!</h3>
+                    <h3 className="text-2xl font-black text-slate-800">הנה התמונה שלך!</h3>
                     <div className="relative aspect-square rounded-3xl overflow-hidden shadow-2xl bg-black border-4 border-white flex items-center justify-center">
                         {composedImageUrl ? (
                            <img src={composedImageUrl} alt="Generated Card" className="w-full h-full object-contain" />
@@ -580,7 +581,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                          <button 
                             onClick={handleCopyCanvasToClipboard} 
                             disabled={copyingImage || !composedImageUrl}
-                            className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 relative overflow-hidden"
+                            className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 relative overflow-hidden cursor-pointer"
                          >
                             {copyingImage && <div className="absolute inset-0 bg-indigo-900/40 animate-pulse" />}
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
@@ -589,38 +590,38 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                          <button 
                             onClick={() => { if(canvasRef.current) { const link = document.createElement('a'); link.download = 'psychologist_card.png'; link.href = canvasRef.current.toDataURL(); link.click(); } }} 
                             disabled={!composedImageUrl}
-                            className="w-full py-4 rounded-2xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
+                            className="w-full py-4 rounded-2xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 cursor-pointer"
                          >
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                             <span>הורד ושתף</span>
                          </button>
                     </div>
-                    <button onClick={() => setShareHubState('version')} className="text-slate-400 text-xs font-bold underline">בחר גרסה אחרת</button>
+                    <button onClick={() => setShareHubState('version')} className="text-slate-400 text-xs font-bold underline cursor-pointer">בחר גרסה אחרת</button>
                 </div>
             ) : (
               <div className="w-full max-w-lg space-y-6 text-center">
                   <h3 className="text-2xl font-black text-slate-800">שתף את הניתוח</h3>
                   
                   {/* Copy Button */}
-                  <button onClick={() => handleCopyText(selectedShareText)} className="w-full py-5 rounded-3xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-lg relative flex items-center justify-center gap-3 transition-colors border border-slate-200">
+                  <button onClick={() => handleCopyText(selectedShareText)} className="w-full py-5 rounded-3xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-lg relative flex items-center justify-center gap-3 transition-colors border border-slate-200 cursor-pointer">
                     <CopyIcon />
                     {showCopiedTooltip ? "הועתק ללוח!" : "העתק טקסט ללוח"}
                   </button>
 
                   <div className="grid grid-cols-2 gap-4">
-                     <button onClick={() => handleSocialShare('whatsapp')} className="p-4 rounded-2xl bg-[#25D366] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#20bd5a] transition-colors shadow-sm">
+                     <button onClick={() => handleSocialShare('whatsapp')} className="p-4 rounded-2xl bg-[#25D366] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#20bd5a] transition-colors shadow-sm cursor-pointer">
                        <WhatsappIcon />
                        <span className="font-bold text-sm">WhatsApp</span>
                      </button>
-                     <button onClick={() => handleSocialShare('telegram')} className="p-4 rounded-2xl bg-[#0088cc] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#0077b5] transition-colors shadow-sm">
+                     <button onClick={() => handleSocialShare('telegram')} className="p-4 rounded-2xl bg-[#0088cc] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#0077b5] transition-colors shadow-sm cursor-pointer">
                        <TelegramIcon />
                        <span className="font-bold text-sm">Telegram</span>
                      </button>
-                     <button onClick={() => handleSocialShare('facebook')} className="p-4 rounded-2xl bg-[#1877F2] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#166fe5] transition-colors shadow-sm">
+                     <button onClick={() => handleSocialShare('facebook')} className="p-4 rounded-2xl bg-[#1877F2] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#166fe5] transition-colors shadow-sm cursor-pointer">
                        <FacebookIcon />
                        <span className="font-bold text-sm">Facebook</span>
                      </button>
-                     <button onClick={() => handleSocialShare('linkedin')} className="p-4 rounded-2xl bg-[#0A66C2] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#004182] transition-colors shadow-sm">
+                     <button onClick={() => handleSocialShare('linkedin')} className="p-4 rounded-2xl bg-[#0A66C2] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#004182] transition-colors shadow-sm cursor-pointer">
                        <LinkedinIcon />
                        <span className="font-bold text-sm">LinkedIn</span>
                      </button>
@@ -630,7 +631,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                     💡 <b>טיפ:</b> בוואטסאפ וטלגרם הטקסט המלא יועתק אוטומטית. בפייסבוק ולינקדאין ייתכן שתצטרכו להדביק את הטקסט ידנית (השתמשו בכפתור ההעתקה למעלה).
                   </div>
 
-                  <button onClick={() => setShareHubState('version')} className="text-slate-400 text-xs font-bold underline mt-4">חזרה לבחירת גרסה</button>
+                  <button onClick={() => setShareHubState('version')} className="text-slate-400 text-xs font-bold underline mt-4 cursor-pointer">חזרה לבחירת גרסה</button>
               </div>
             )}
           </div>

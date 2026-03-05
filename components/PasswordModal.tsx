@@ -21,7 +21,7 @@ export const PasswordModal: React.FC<PasswordModalProps> = ({ isOpen, onClose, o
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity cursor-pointer" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fadeInUp p-6">
         <h3 className="text-xl font-bold text-slate-800 mb-4 text-center">גישה למפתחים בלבד</h3>
         <p className="text-slate-600 text-sm mb-6 text-center">

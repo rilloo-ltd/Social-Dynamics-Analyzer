@@ -1,6 +1,6 @@
 'use server';
 
-import { readStats, readChats, writeChats } from '@/lib/storage';
+import { getAllStats, clearAllChats } from '@/lib/firestore-admin';
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Magav1!';
 
@@ -12,16 +12,16 @@ export async function verifyAdminPasswordAction(password: string) {
 }
 
 export async function getAdminStatsAction() {
-  const stats = readStats();
-  const chats = readChats();
+  const stats = await getAllStats();
 
-  // Enrich stats with chat outputs for display
+  // Format chats for display
   const enrichedStats = {
     ...stats,
-    chats: Object.values(chats).map(chat => ({
+    chats: stats.chats.map(chat => ({
       code: chat.code,
       timestamp: chat.timestamp,
-      outputs: chat.outputs
+      outputs: chat.outputs,
+      userId: chat.userId
     }))
   };
 
@@ -29,6 +29,6 @@ export async function getAdminStatsAction() {
 }
 
 export async function resetCacheAction() {
-  writeChats({});
+  await clearAllChats();
   return { success: true, message: 'Cache cleared' };
 }

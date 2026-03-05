@@ -53,7 +53,7 @@ export const GroupParticipantSelector: React.FC<GroupParticipantSelectorProps> =
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div 
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity animate-fadeIn"
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity animate-fadeIn cursor-pointer"
         onClick={onClose}
       />
       
@@ -70,7 +70,7 @@ export const GroupParticipantSelector: React.FC<GroupParticipantSelectorProps> =
         <div className="p-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
           <button 
             onClick={clearSelection}
-            className="text-xs font-bold text-slate-500 hover:text-red-600 px-3 py-1"
+            className="text-xs font-bold text-slate-500 hover:text-red-600 px-3 py-1 cursor-pointer"
           >
             נקה הכל
           </button>
@@ -79,7 +79,7 @@ export const GroupParticipantSelector: React.FC<GroupParticipantSelectorProps> =
           </div>
           <button 
             onClick={selectTop15}
-            className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100 hover:bg-indigo-100"
+            className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100 hover:bg-indigo-100 cursor-pointer"
           >
             בחר 15 פעילים
           </button>
@@ -95,7 +95,7 @@ export const GroupParticipantSelector: React.FC<GroupParticipantSelectorProps> =
                   key={p}
                   onClick={() => toggleParticipant(p)}
                   className={`
-                    p-3 rounded-xl text-right text-sm font-medium transition-all duration-200 border relative overflow-hidden group
+                    p-3 rounded-xl text-right text-sm font-medium transition-all duration-200 border relative overflow-hidden group cursor-pointer
                     ${isSelected 
                       ? 'bg-indigo-600 text-white border-indigo-600 shadow-md transform scale-[1.02]' 
                       : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
@@ -120,7 +120,7 @@ export const GroupParticipantSelector: React.FC<GroupParticipantSelectorProps> =
         <div className="p-4 border-t border-slate-100 bg-slate-50 shrink-0 flex gap-3">
            <button 
              onClick={onClose}
-             className="flex-1 py-3 rounded-xl font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 transition-colors"
+             className="flex-1 py-3 rounded-xl font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer"
            >
              ביטול
            </button>
@@ -132,7 +132,7 @@ export const GroupParticipantSelector: React.FC<GroupParticipantSelectorProps> =
                }
                onConfirm(Array.from(selected));
              }}
-             className="flex-[2] py-3 rounded-xl font-bold text-white bg-slate-900 hover:bg-slate-800 transition-colors shadow-lg flex items-center justify-center gap-2"
+             className="flex-[2] py-3 rounded-xl font-bold text-white bg-slate-900 hover:bg-slate-800 transition-colors shadow-lg flex items-center justify-center gap-2 cursor-pointer"
            >
              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />

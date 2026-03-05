@@ -66,7 +66,23 @@ const truncateChatForContext = (messages: ChatMessage[], limit = 20000): string 
 
 const cleanJson = (text: string): string => {
   if (!text) return "{}";
-  return text.replace(/```json\s*|\s*```/g, "").replace(/```/g, "").trim();
+  
+  // Remove markdown code blocks
+  let cleaned = text.replace(/```json\s*|\s*```/g, "").replace(/```/g, "").trim();
+  
+  // Try to extract JSON object if there's extra text
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    cleaned = jsonMatch[0];
+  }
+  
+  // Remove trailing commas before closing braces/brackets
+  cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
+  
+  // Fix common issues with Unicode characters in JSON strings
+  cleaned = cleaned.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+  
+  return cleaned;
 };
 
 const getApiKey = async (): Promise<string> => {
@@ -136,7 +152,23 @@ ${chatContext}
   
   const rawText = result.text || "";
   const cleanedText = cleanJson(rawText);
-  const parsed = JSON.parse(cleanedText);
+  
+  let parsed;
+  try {
+    parsed = JSON.parse(cleanedText);
+  } catch (error) {
+    console.error('JSON Parse Error:', error);
+    console.error('Raw text:', rawText);
+    console.error('Cleaned text:', cleanedText);
+    
+    // Fallback: return empty structure
+    return {
+      personality: "מצטערים, התרחשה שגיאה בניתוח. אנא נסו שוב.",
+      othersThoughts: "",
+      improvement: "",
+      hiddenThoughts: "",
+    };
+  }
 
   return {
     personality: parsed.personality || "",
@@ -258,36 +290,78 @@ ${analysisText}
 }
 
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
+  try {
+    // Use OpenAI DALL-E 3 to generate the actual image
+    const { default: OpenAI } = await import('openai');
+    
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
 
-  const fullPrompt = `Create a Disney Pixar style cartoon illustration: ${prompt}. 
+    const fullPrompt = `Create a Disney Pixar style cartoon illustration: ${prompt}. 
 High quality, vibrant colors, expressive characters, professional animation style.`;
 
-  const result = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
-    contents: {
-      parts: [{ text: fullPrompt }]
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1"
-      }
-    }
-  });
-  
-  // Extract base64 image from response
-  if (result.candidates && result.candidates[0]) {
-    const candidate = result.candidates[0];
-    if (candidate.content && candidate.content.parts) {
-      for (const part of candidate.content.parts) {
-        if (part.inlineData && part.inlineData.data) {
-          return part.inlineData.data;
-        }
-      }
-    }
-  }
+    console.log('[DALL-E] Generating image with prompt:', fullPrompt.substring(0, 100) + '...');
 
-  throw new Error('No image data in response');
+    const response = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: fullPrompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+      response_format: "b64_json"
+    });
+
+    const imageData = response.data[0].b64_json;
+    
+    if (!imageData) {
+      throw new Error('No image data returned from DALL-E');
+    }
+
+    console.log('[DALL-E] Image generated successfully');
+    
+    // Return as base64 data URL
+    return `data:image/png;base64,${imageData}`;
+    
+  } catch (error: any) {
+    console.error('DALL-E image generation error:', error);
+    
+    // If OpenAI API key is missing or invalid
+    if (error?.status === 401 || error?.message?.includes('API key')) {
+      const errorMsg = 'OpenAI API key is missing or invalid. Please add OPENAI_API_KEY to .env.local';
+      console.error(errorMsg);
+      
+      // Return informative error placeholder
+      const errorSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+        <defs>
+          <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:#fef3c7;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#fde68a;stop-opacity:1" />
+          </linearGradient>
+        </defs>
+        <rect width="1024" height="1024" fill="url(#bg)"/>
+        <rect x="112" y="300" width="800" height="400" rx="20" fill="white" opacity="0.9"/>
+        <text x="512" y="420" font-family="Arial" font-size="28" fill="#d97706" text-anchor="middle" font-weight="bold">⚠️ Missing OpenAI API Key</text>
+        <text x="512" y="480" font-family="Arial" font-size="18" fill="#92400e" text-anchor="middle">Please add your API key to .env.local:</text>
+        <text x="512" y="520" font-family="Arial" font-size="16" fill="#78350f" text-anchor="middle" font-family="monospace">OPENAI_API_KEY=your-key-here</text>
+        <text x="512" y="580" font-family="Arial" font-size="14" fill="#a16207" text-anchor="middle">Get your key from: platform.openai.com/api-keys</text>
+      </svg>`;
+      
+      const base64ErrorSvg = Buffer.from(errorSvg).toString('base64');
+      return `data:image/svg+xml;base64,${base64ErrorSvg}`;
+    }
+    
+    // Generic error placeholder
+    const errorSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+      <rect width="1024" height="1024" fill="#fee2e2"/>
+      <text x="512" y="450" font-family="Arial" font-size="32" fill="#991b1b" text-anchor="middle" font-weight="bold">שגיאה ביצירת תמונה</text>
+      <text x="512" y="510" font-family="Arial" font-size="20" fill="#dc2626" text-anchor="middle">אנא נסה שוב מאוחר יותר</text>
+      <text x="512" y="560" font-family="Arial" font-size="16" fill="#b91c1c" text-anchor="middle">${error?.message?.substring(0, 50) || 'Unknown error'}</text>
+    </svg>`;
+    
+    const base64ErrorSvg = Buffer.from(errorSvg).toString('base64');
+    return `data:image/svg+xml;base64,${base64ErrorSvg}`;
+  }
 }
 
 export interface VisualAssetData {
@@ -332,7 +406,22 @@ ${analysisText}
   });
 
   const cleanedText = cleanJson(result.text || "{}");
-  const data = JSON.parse(cleanedText);
+  
+  let data;
+  try {
+    data = JSON.parse(cleanedText);
+  } catch (error) {
+    console.error('JSON Parse Error in serverGetVisualAssetData:', error);
+    console.error('Raw text:', result.text);
+    console.error('Cleaned text:', cleanedText);
+    
+    // Fallback data
+    data = {
+      headline: "הניתוח הפסיכולוגי שלך",
+      points: ["ניתוח מפורט זמין בקרוב"],
+      visualPrompt: "A friendly cartoon character in a bright, cheerful setting, Pixar style"
+    };
+  }
   
   return {
     headline: data.headline || "הניתוח הפסיכולוגי שלך",

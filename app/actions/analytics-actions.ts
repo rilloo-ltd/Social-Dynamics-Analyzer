@@ -1,9 +1,23 @@
 'use server';
 
-import { readChats, writeChats, generateChatCode, readStats, writeStats } from '@/lib/storage';
-import { randomBytes } from 'crypto';
+import { generateChatCode } from '@/lib/firestore-admin';
+import { 
+  storeChat, 
+  getChat, 
+  updateChatOutput,
+  logUpload as firestoreLogUpload,
+  logButtonPress,
+  logShare as firestoreLogShare,
+  logImageGeneration as firestoreLogImage,
+  logFeedback as firestoreLogFeedback,
+  logGeminiUsage
+} from '@/lib/firestore-admin';
 
-export async function uploadChatAction(text: string, forceNew?: boolean) {
+export async function uploadChatAction(userId: string, text: string, forceNew?: boolean) {
+  if (!userId) {
+    throw new Error('User ID required');
+  }
+  
   if (!text) {
     throw new Error('No text provided');
   }
@@ -22,166 +36,73 @@ export async function uploadChatAction(text: string, forceNew?: boolean) {
     throw new Error('Could not generate chat code (empty content)');
   }
 
-  const chats = readChats();
-
-  if (chats[code] && !forceNew) {
+  // Check if chat already exists
+  const existingChat = await getChat(userId, code);
+  
+  if (existingChat && !forceNew) {
     console.log(`Chat with code ${code} already exists. Returning existing data.`);
-    return { success: true, code, existingOutputs: chats[code].outputs || {} };
+    return { success: true, code, existingOutputs: existingChat.outputs || {} };
   }
 
-  chats[code] = {
-    code,
-    text,
-    timestamp: new Date().toISOString(),
-    outputs: forceNew ? {} : (chats[code]?.outputs || {})
-  };
-
-  writeChats(chats);
+  await storeChat(userId, code, text);
 
   console.log(`[uploadChatAction] Chat stored successfully with code: ${code}`);
   return { success: true, code, existingOutputs: {} };
 }
 
-export async function updateChatCacheAction(code: string, type: string, output: any) {
-  if (!code || !type || !output) {
+export async function updateChatCacheAction(userId: string, code: string, type: string, output: any) {
+  if (!userId || !code || !type || !output) {
     throw new Error('Missing required fields');
   }
 
-  const chats = readChats();
-
-  if (!chats[code]) {
-    throw new Error('Chat not found');
-  }
-
-  if (!chats[code].outputs) {
-    chats[code].outputs = {};
-  }
-
-  chats[code].outputs[type] = {
-    output,
-    timestamp: new Date().toISOString()
-  };
-
-  writeChats(chats);
+  await updateChatOutput(userId, code, type, output);
 
   return { success: true };
 }
 
-export async function logUploadAction(participantsCount: number, tokensCount: number) {
-  const stats = readStats();
-  const sessionId = randomBytes(16).toString('hex');
-
-  stats.uploads.push({
-    timestamp: new Date().toISOString(),
-    participantsCount,
-    tokensCount,
-    sessionId
-  });
-
-  if (!stats.sessions) {
-    stats.sessions = {};
+export async function logUploadAction(userId: string, participantsCount: number, tokensCount: number) {
+  if (!userId) {
+    throw new Error('User ID required');
   }
-  stats.sessions[sessionId] = { shares: [], images: [] };
 
-  writeStats(stats);
+  const sessionId = await firestoreLogUpload(userId, participantsCount, tokensCount);
 
   return { success: true, sessionId };
 }
 
 export async function logButtonClickAction(buttonId: string) {
-  const stats = readStats();
-
-  if (!stats.buttonPresses) {
-    stats.buttonPresses = {};
-  }
-
-  stats.buttonPresses[buttonId] = (stats.buttonPresses[buttonId] || 0) + 1;
-
-  writeStats(stats);
-
+  await logButtonPress(buttonId);
   return { success: true };
 }
 
-export async function logShareAction(sessionId: string, type: string, platform?: string) {
-  const stats = readStats();
-
-  if (!stats.sessions) {
-    stats.sessions = {};
+export async function logShareAction(userId: string, sessionId: string, type: string, platform?: string) {
+  if (!userId || !sessionId) {
+    throw new Error('User ID and session ID required');
   }
 
-  if (!stats.sessions[sessionId]) {
-    stats.sessions[sessionId] = { shares: [], images: [] };
-  }
-
-  stats.sessions[sessionId].shares.push({
-    type,
-    platform,
-    timestamp: new Date().toISOString()
-  });
-
-  writeStats(stats);
-
+  await firestoreLogShare(userId, sessionId, type, platform);
   return { success: true };
 }
 
-export async function logImageGenerationAction(sessionId: string, prompt: string) {
-  const stats = readStats();
-
-  if (!stats.sessions) {
-    stats.sessions = {};
+export async function logImageGenerationAction(userId: string, sessionId: string, prompt: string) {
+  if (!userId || !sessionId) {
+    throw new Error('User ID and session ID required');
   }
 
-  if (!stats.sessions[sessionId]) {
-    stats.sessions[sessionId] = { shares: [], images: [] };
-  }
-
-  stats.sessions[sessionId].images.push({
-    prompt,
-    timestamp: new Date().toISOString()
-  });
-
-  writeStats(stats);
-
+  await firestoreLogImage(userId, sessionId, prompt);
   return { success: true };
 }
 
-export async function logFeedbackAction(sessionId: string, rating: number, comment: string) {
-  const stats = readStats();
-
-  if (!stats.sessions) {
-    stats.sessions = {};
+export async function logFeedbackAction(userId: string, sessionId: string, rating: number, comment: string) {
+  if (!userId || !sessionId) {
+    throw new Error('User ID and session ID required');
   }
 
-  if (!stats.sessions[sessionId]) {
-    stats.sessions[sessionId] = { shares: [], images: [] };
-  }
-
-  stats.sessions[sessionId].feedback = {
-    rating,
-    comment,
-    timestamp: new Date().toISOString()
-  };
-
-  writeStats(stats);
-
+  await firestoreLogFeedback(userId, sessionId, rating, comment);
   return { success: true };
 }
 
 export async function logGeminiUsageAction(inputTokens: number, outputTokens: number, model: string) {
-  const stats = readStats();
-
-  if (!stats.geminiUsage) {
-    stats.geminiUsage = [];
-  }
-
-  stats.geminiUsage.push({
-    timestamp: new Date().toISOString(),
-    inputTokens,
-    outputTokens,
-    model
-  });
-
-  writeStats(stats);
-
+  await logGeminiUsage(inputTokens, outputTokens, model);
   return { success: true };
 }

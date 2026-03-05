@@ -107,7 +107,7 @@ export default function AdminPage() {
         <div className="fixed bottom-4 right-4">
           <button 
             onClick={() => { setShowDebug(!showDebug); if (!showDebug) fetchDebugLogs(); }}
-            className="bg-gray-800 text-white px-4 py-2 rounded-full text-xs shadow-lg hover:bg-gray-700"
+            className="bg-gray-800 text-white px-4 py-2 rounded-full text-xs shadow-lg hover:bg-gray-700 cursor-pointer"
           >
             {showDebug ? 'Hide Debug Logs' : 'Show Debug Logs'}
           </button>
@@ -117,7 +117,7 @@ export default function AdminPage() {
           <div className="fixed bottom-16 right-4 w-96 h-64 bg-black text-green-400 p-4 rounded-lg shadow-2xl overflow-auto text-xs font-mono border border-gray-700 z-50">
             <div className="flex justify-between items-center mb-2 border-b border-gray-700 pb-1">
               <span className="font-bold">Server Logs (Last 50 lines)</span>
-              <button onClick={fetchDebugLogs} className="text-white hover:text-blue-300">Refresh</button>
+              <button onClick={fetchDebugLogs} className="text-white hover:text-blue-300 cursor-pointer">Refresh</button>
             </div>
             {debugLogs.length === 0 ? (
               <p className="text-gray-500 italic">No logs found yet...</p>
@@ -212,7 +212,7 @@ export default function AdminPage() {
                   <button
                     key={range}
                     onClick={() => setTimeRange(range)}
-                    className={`px-3 py-1 text-sm rounded-md transition-all ${
+                    className={`px-3 py-1 text-sm rounded-md transition-all cursor-pointer ${
                       timeRange === range ? 'bg-white shadow text-blue-600 font-medium' : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >

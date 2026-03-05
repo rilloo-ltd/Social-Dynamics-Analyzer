@@ -41,7 +41,7 @@ export default function SignUpPage() {
             placeholder="Password" 
             className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
-          <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition-colors">Sign Up</button>
+          <button type="submit" className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition-colors cursor-pointer">Sign Up</button>
         </form>
         <p className="text-center mt-4">
           Already have an account? <a href="/login" className="text-indigo-600 hover:underline">Login</a>

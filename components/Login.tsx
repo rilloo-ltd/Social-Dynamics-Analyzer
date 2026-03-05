@@ -29,9 +29,9 @@ const Login = () => {
       <form onSubmit={handleEmailSignIn}>
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" />
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
-        <button type="submit">Sign In with Email</button>
+        <button type="submit" className="cursor-pointer">Sign In with Email</button>
       </form>
-      <button onClick={handleGoogleSignIn}>Sign In with Google</button>
+      <button onClick={handleGoogleSignIn} className="cursor-pointer">Sign In with Google</button>
       {error && <p>{error}</p>}
     </div>
   );
