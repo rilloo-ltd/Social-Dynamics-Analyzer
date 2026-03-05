@@ -583,7 +583,7 @@ export default function HomePage() {
               <div className="inline-flex items-center justify-center p-1 bg-white/60 backdrop-blur-md rounded-full mb-8 shadow-xl animate-bounce-slow ring-4 ring-teal-100/50">
                  <img src={LOGO_URL} className="w-24 h-24 rounded-full border-4 border-white shadow-sm" />
               </div>
-              <h1 className="text-6xl md:text-8xl font-black mb-6 tracking-tight text-teal-900 drop-shadow-sm animate-fadeIn">הפסיכולוגית</h1>
+              <h1 className="text-6xl md:text-8xl font-black mb-6 tracking-tight text-teal-900 drop-shadow-sm animate-fadeIn">הדודה</h1>
               <p className="text-xl md:text-3xl text-slate-600 max-w-3xl mx-auto mb-10 font-light leading-relaxed animate-fadeIn">
                 הבינה המלאכותית שחושפת <span className="font-bold text-teal-700 border-b-2 border-teal-300">סודות, אהבות וקשיים</span> בשיחות ווטסאפ (ועוזרת לפתור אותם)
               </p>
@@ -665,7 +665,7 @@ export default function HomePage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="bg-teal-50/50 p-8 rounded-3xl relative border border-teal-100/50">
                         <Quote className="absolute top-6 right-6 w-8 h-8 text-teal-200" />
-                        <p className="text-slate-700 leading-relaxed mb-6 relative z-10">"הייתי בטוחה שהכל בסדר בינינו, עד שהפסיכולוגית הראתה לי מה באמת קורה מתחת לפני השטח. זה פשוט פתח לי את העיניים בצורה שלא האמנתי."</p>
+                        <p className="text-slate-700 leading-relaxed mb-6 relative z-10">"הייתי בטוחה שהכל בסדר בינינו, עד שהדודה הראתה לי מה באמת קורה מתחת לפני השטח. זה פשוט פתח לי את העיניים בצורה שלא האמנתי."</p>
                         <div className="flex items-center gap-3">
                             <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center font-bold text-teal-600">מ</div>
                             <div>
@@ -702,7 +702,7 @@ export default function HomePage() {
 
         {/* Footer */}
         <div className="bg-slate-900 text-slate-400 py-12 text-center text-sm">
-            <p>© 2026 הפסיכולוגית. כל הזכויות שמורות.</p>
+            <p>© 2026 הדודה. כל הזכויות שמורות.</p>
             <p className="mt-2 opacity-60">הניתוח מתבצע באמצעות בינה מלאכותית ונועד למטרות בידור והעשרה בלבד.</p>
         </div>
 
@@ -727,7 +727,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
       <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
-         <div className="flex items-center gap-3"><img src={LOGO_URL} className="w-10 h-10 rounded-full" /><h1 className="font-black text-slate-800 text-xl hidden md:block">הפסיכולוגית</h1></div>
+         <div className="flex items-center gap-3"><img src={LOGO_URL} className="w-10 h-10 rounded-full" /><h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1></div>
          <div className="flex items-center gap-4">
             <button onClick={() => router.push('/admin')} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer" title="Admin Login"><Lock className="w-4 h-4" /></button>
             <button onClick={() => setChatData(null)} className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer">החלף צ'אט</button>

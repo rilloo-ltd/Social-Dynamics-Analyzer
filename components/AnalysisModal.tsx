@@ -221,7 +221,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   };
 
   const constructShareableText = (bodyText: string) => {
-    const branding = `\n\n🧠 נוצר באמצעות 'הפסיכולוגית' - ניתוח צ'אטים באמצעות AI.\nנסו בעצמכם כאן: ${window.location.href}`;
+    const branding = `\n\n🧠 הניתוח באדיבות 'הדודה' - בינה מלאכותית שמנתחת צ'אטים וחושפת תובנות עמוקות.\nנסו בעצמכם כאן: ${window.location.href}`;
     const privacy = privacyNoticeText ? `\n\n🔒 ${privacyNoticeText}` : "";
     return `${title}\n\n${bodyText}\n----------------${branding}${privacy}`;
   };
@@ -418,8 +418,8 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
         ctx.textAlign = 'center';
         ctx.shadowBlur = 10;
         ctx.lineWidth = 2;
-        ctx.strokeText('בוצע באמצעות "הפסיכולוגית" - ניתוח אנונימי', size / 2, size - 50);
-        ctx.fillText('בוצע באמצעות "הפסיכולוגית" - ניתוח אנונימי', size / 2, size - 50);
+        ctx.strokeText('בוצע באמצעות "הדודה" - ניתוח אנונימי', size / 2, size - 50);
+        ctx.fillText('בוצע באמצעות "הדודה" - ניתוח אנונימי', size / 2, size - 50);
 
         setComposedImageUrl(canvas.toDataURL('image/png'));
       });
