@@ -111,6 +111,26 @@ const getApiKey = async (): Promise<string> => {
   }
 };
 
+const getOpenAiApiKey = async (): Promise<string> => {
+  if (process.env.OPENAI_API_KEY) {
+    return process.env.OPENAI_API_KEY;
+  }
+
+  try {
+    const client = new SecretManagerServiceClient();
+    const name = 'projects/social-analyzer-24750033-dc53d/secrets/OPENAI_API_KEY/versions/latest';
+    const [version] = await client.accessSecretVersion({ name });
+    const payload = version.payload?.data?.toString();
+    if (payload) {
+      return payload;
+    }
+    throw new Error('Secret payload is empty');
+  } catch (error) {
+    console.error('Failed to access OpenAI secret from Secret Manager:', error);
+    throw new Error('Could not fetch OPENAI_API_KEY from Secret Manager');
+  }
+};
+
 export async function serverAnalyzeChatFull(
   messages: ChatMessage[],
   targetUser: string,
@@ -292,8 +312,10 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
     // Use OpenAI DALL-E 3 to generate the actual image
     const { default: OpenAI } = await import('openai');
     
+    const apiKey = await getOpenAiApiKey();
+    
     const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: apiKey,
     });
 
     const fullPrompt = `Create a Disney Pixar style cartoon illustration: ${prompt}. 
