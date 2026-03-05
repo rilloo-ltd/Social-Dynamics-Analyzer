@@ -1,9 +1,13 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { PayPalProvider } from '@/components/PayPalProvider';
 
 export const metadata: Metadata = {
   title: 'הפסיכולוגית - Social Dynamics Analyzer',
   description: 'AI-powered WhatsApp chat analysis for understanding social dynamics',
+  icons: {
+    icon: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({
@@ -20,7 +24,9 @@ export default function RootLayout({
         />
       </head>
       <body className="bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50 min-h-screen">
-        {children}
+        <PayPalProvider>
+          {children}
+        </PayPalProvider>
       </body>
     </html>
   );

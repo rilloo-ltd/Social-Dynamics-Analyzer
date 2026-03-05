@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkDailyUploadLimit, incrementDailyUpload } from '@/lib/firestore-admin';
-
-const MAX_DAILY_UPLOADS = 2;
+import { checkDailyUploadLimit, incrementDailyUpload, getUserTier } from '@/lib/firestore-admin';
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,24 +9,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'User ID required' }, { status: 400 });
     }
 
+    // Get user's tier and max uploads from database
+    const { maxDailyUploads } = await getUserTier(userId);
+
     if (action === 'check') {
-      const result = await checkDailyUploadLimit(userId, MAX_DAILY_UPLOADS);
+      const result = await checkDailyUploadLimit(userId, maxDailyUploads);
       return NextResponse.json({ 
         canUpload: result.canUpload, 
         currentCount: result.currentCount, 
-        maxUploads: MAX_DAILY_UPLOADS,
+        maxUploads: maxDailyUploads,
         remainingUploads: result.remainingUploads
       });
     } else if (action === 'increment') {
       try {
-        const result = await incrementDailyUpload(userId, MAX_DAILY_UPLOADS);
+        const result = await incrementDailyUpload(userId, maxDailyUploads);
         return NextResponse.json(result);
       } catch (error: any) {
         if (error.message === 'Daily upload limit reached') {
           return NextResponse.json({ 
             error: 'Daily upload limit reached',
-            currentCount: MAX_DAILY_UPLOADS,
-            maxUploads: MAX_DAILY_UPLOADS
+            currentCount: maxDailyUploads,
+            maxUploads: maxDailyUploads
           }, { status: 429 });
         }
         throw error;

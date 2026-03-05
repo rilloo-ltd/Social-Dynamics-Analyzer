@@ -1,7 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Sparkles, Zap, TrendingUp } from 'lucide-react';
+import { PayPalButtons } from '@paypal/react-paypal-js';
+import { useRouter } from 'next/navigation';
 
 interface UpgradeModalProps {
   isOpen: boolean;
@@ -9,6 +11,7 @@ interface UpgradeModalProps {
   onUpgrade: (tier: 'basic' | 'super') => void;
   currentCount: number;
   maxUploads: number;
+  userId?: string;
 }
 
 export const UpgradeModal: React.FC<UpgradeModalProps> = ({ 
@@ -16,9 +19,54 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
   onClose, 
   onUpgrade,
   currentCount,
-  maxUploads
+  maxUploads,
+  userId
 }) => {
+  const router = useRouter();
+  const [selectedTier, setSelectedTier] = useState<'basic' | 'super' | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
   if (!isOpen) return null;
+
+  const tierPrices = {
+    basic: '5.00',
+    super: '30.00'
+  };
+
+  const handlePaymentSuccess = async (orderId: string) => {
+    if (!selectedTier || !userId) return;
+
+    setIsProcessing(true);
+
+    try {
+      const response = await fetch('/api/paypal-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          orderId,
+          tier: selectedTier,
+          amount: parseFloat(tierPrices[selectedTier])
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        alert(`🎉 תשלום התקבל בהצלחה! שודרגת למנוי ${selectedTier === 'basic' ? 'בסיסי' : 'על'}!`);
+        onUpgrade(selectedTier);
+        onClose();
+        router.refresh();
+      } else {
+        alert('שגיאה באימות התשלום. אנא צור קשר עם התמיכה.');
+      }
+    } catch (error) {
+      console.error('Payment processing error:', error);
+      alert('שגיאה בעיבוד התשלום. אנא נסה שוב.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fadeIn">
@@ -85,7 +133,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
           {/* Pricing Tiers */}
           <div className="grid grid-cols-1 gap-4 mb-6">
             {/* Basic Tier */}
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-5 border-2 border-blue-200 hover:border-blue-300 transition-all cursor-pointer group" onClick={() => onUpgrade('basic')}>
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-5 border-2 border-blue-200">
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <h3 className="text-lg font-bold text-blue-900">מנוי בסיסי</h3>
@@ -95,17 +143,52 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                   <div className="text-2xl font-black text-blue-900">
                     $5
                   </div>
-                  <span className="text-xs text-blue-600">לחודש</span>
+                  <span className="text-xs text-blue-600">תשלום חד-פעמי</span>
                 </div>
               </div>
-              <button className="w-full py-2.5 rounded-lg bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 transition-all shadow-md group-hover:shadow-lg">
-                בחר מנוי בסיסי
-              </button>
+              
+              {selectedTier === 'basic' && userId ? (
+                <div className="mt-3">
+                  <PayPalButtons
+                    style={{ layout: 'horizontal', label: 'pay', tagline: false }}
+                    disabled={isProcessing}
+                    createOrder={(data, actions) => {
+                      return actions.order.create({
+                        intent: 'CAPTURE',
+                        purchase_units: [{
+                          amount: {
+                            currency_code: 'USD',
+                            value: tierPrices.basic
+                          },
+                          description: 'מנוי בסיסי - 10 ניתוחים ביום'
+                        }]
+                      });
+                    }}
+                    onApprove={async (data, actions) => {
+                      if (!actions.order) return;
+                      const details = await actions.order.capture();
+                      await handlePaymentSuccess(details.id);
+                    }}
+                    onError={(err) => {
+                      console.error('PayPal error:', err);
+                      alert('שגיאה בתשלום. אנא נסה שוב.');
+                    }}
+                  />
+                </div>
+              ) : (
+                <button 
+                  onClick={() => setSelectedTier('basic')}
+                  className="w-full py-2.5 rounded-lg bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 transition-all shadow-md cursor-pointer"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? 'מעבד...' : 'בחר מנוי בסיסי'}
+                </button>
+              )}
             </div>
 
             {/* Super Tier */}
-            <div className="bg-gradient-to-br from-purple-50 to-pink-100 rounded-2xl p-5 border-2 border-purple-300 hover:border-purple-400 transition-all cursor-pointer group relative overflow-hidden" onClick={() => onUpgrade('super')}>
-              <div className="absolute top-2 left-2 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md">
+            <div className="bg-gradient-to-br from-purple-50 to-pink-100 rounded-2xl p-5 border-2 border-purple-300 relative overflow-hidden">
+              <div className="absolute top-2 left-2 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md z-10">
                 הכי פופולרי ⭐
               </div>
               <div className="flex items-center justify-between mb-3 mt-2">
@@ -117,16 +200,59 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                   <div className="text-2xl font-black text-purple-900">
                     $30
                   </div>
-                  <span className="text-xs text-purple-600">לחודש</span>
+                  <span className="text-xs text-purple-600">תשלום חד-פעמי</span>
                 </div>
               </div>
-              <button className="w-full py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold text-sm hover:from-purple-700 hover:to-pink-700 transition-all shadow-md group-hover:shadow-lg">
-                בחר מנוי-על
-              </button>
+              
+              {selectedTier === 'super' && userId ? (
+                <div className="mt-3">
+                  <PayPalButtons
+                    style={{ layout: 'horizontal', label: 'pay', tagline: false }}
+                    disabled={isProcessing}
+                    createOrder={(data, actions) => {
+                      return actions.order.create({
+                        intent: 'CAPTURE',
+                        purchase_units: [{
+                          amount: {
+                            currency_code: 'USD',
+                            value: tierPrices.super
+                          },
+                          description: 'מנוי-על - 50 ניתוחים ביום'
+                        }]
+                      });
+                    }}
+                    onApprove={async (data, actions) => {
+                      if (!actions.order) return;
+                      const details = await actions.order.capture();
+                      await handlePaymentSuccess(details.id);
+                    }}
+                    onError={(err) => {
+                      console.error('PayPal error:', err);
+                      alert('שגיאה בתשלום. אנא נסה שוב.');
+                    }}
+                  />
+                </div>
+              ) : (
+                <button 
+                  onClick={() => setSelectedTier('super')}
+                  className="w-full py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold text-sm hover:from-purple-700 hover:to-pink-700 transition-all shadow-md cursor-pointer"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? 'מעבד...' : 'בחר מנוי-על'}
+                </button>
+              )}
             </div>
           </div>
 
-          <p className="text-xs text-center text-slate-500 mb-4">ניתן לביטול בכל עת • התשלום מאובטח</p>
+          {selectedTier && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
+              <p className="text-sm text-blue-800 font-medium">
+                {selectedTier === 'basic' ? '✓ בחרת מנוי בסיסי' : '✓ בחרת מנוי-על'}
+              </p>
+            </div>
+          )}
+
+          <p className="text-xs text-center text-slate-500 mb-4">תשלום מאובטח דרך PayPal • גישה מיידית</p>
 
           {/* Buttons */}
           <div className="flex flex-col gap-3">

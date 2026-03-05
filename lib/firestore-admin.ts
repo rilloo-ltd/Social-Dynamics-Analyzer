@@ -207,6 +207,52 @@ export async function resetDailyUploadLimit(userId: string) {
   }
 }
 
+export async function updateUserTier(
+  userId: string, 
+  tier: 'free' | 'basic' | 'super',
+  maxDailyUploads: number
+) {
+  const db = getAdminDb();
+  
+  try {
+    await db.collection('users').doc(userId).set({
+      tier,
+      maxDailyUploads,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    
+    console.log(`[Firestore] Updated user ${userId} to tier: ${tier}, max uploads: ${maxDailyUploads}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating user tier:', error);
+    throw new Error('Failed to update user tier');
+  }
+}
+
+export async function getUserTier(userId: string): Promise<{
+  tier: 'free' | 'basic' | 'super';
+  maxDailyUploads: number;
+}> {
+  const db = getAdminDb();
+  
+  try {
+    const userDoc = await db.collection('users').doc(userId).get();
+    
+    if (!userDoc.exists) {
+      return { tier: 'free', maxDailyUploads: 2 };
+    }
+    
+    const data = userDoc.data();
+    return {
+      tier: data?.tier || 'free',
+      maxDailyUploads: data?.maxDailyUploads || 2
+    };
+  } catch (error) {
+    console.error('Error getting user tier:', error);
+    return { tier: 'free', maxDailyUploads: 2 };
+  }
+}
+
 // ============ ANALYTICS ============
 
 export async function logUpload(userId: string, participantsCount: number, tokensCount: number) {

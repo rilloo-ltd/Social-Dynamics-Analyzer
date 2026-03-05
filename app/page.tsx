@@ -550,6 +550,7 @@ export default function HomePage() {
           onUpgrade={handleUpgrade}
           currentCount={uploadLimitData.currentCount}
           maxUploads={uploadLimitData.maxUploads}
+          userId={authUser?.uid}
         />
       </div>
     );
@@ -719,6 +720,7 @@ export default function HomePage() {
           onUpgrade={handleUpgrade}
           currentCount={uploadLimitData.currentCount}
           maxUploads={uploadLimitData.maxUploads}
+          userId={authUser?.uid}
         />
       </div>
     );
@@ -846,6 +848,7 @@ export default function HomePage() {
         onUpgrade={handleUpgrade}
         currentCount={uploadLimitData.currentCount}
         maxUploads={uploadLimitData.maxUploads}
+        userId={authUser?.uid}
       />
     </div>
   );
