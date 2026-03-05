@@ -151,14 +151,17 @@ export default function HomePage() {
     try {
       const data = await uploadChatAction(authUser.uid, text, isNewSessionMode);
       if (data.code) {
+        // Always reset cached outputs first to ensure state is clean
+        setCachedOutputs({});
         setChatCode(data.code);
         console.log("Chat stored with code:", data.code);
         
         if (data.existingOutputs && !isNewSessionMode) {
           console.log("Found existing outputs:", Object.keys(data.existingOutputs));
-          setCachedOutputs(data.existingOutputs);
-        } else {
-          setCachedOutputs({});
+          // Set cached outputs after a small delay to ensure state update is detected
+          setTimeout(() => {
+            setCachedOutputs(data.existingOutputs);
+          }, 0);
         }
         
         return data.code;
@@ -212,8 +215,7 @@ export default function HomePage() {
     setHighlights([]);
     usedHighlightIndicesRef.current.clear();
     setSessionId(null); // Reset session on new file
-    setChatCode(null); // Reset chat code
-    setCachedOutputs({}); // Reset cached outputs
+    // Don't reset chatCode and cachedOutputs here - let storeChat handle it
 
     try {
       const parsed = await parseChatFile(text, (percent) => setProcessingProgress(percent));

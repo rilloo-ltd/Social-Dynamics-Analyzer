@@ -58,6 +58,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
     const file = e.target.files?.[0];
     if (file) {
       processFile(file);
+      // Reset the input value so the same file can be selected again
+      e.target.value = '';
     }
   };
 

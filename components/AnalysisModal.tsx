@@ -490,9 +490,9 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                                     step="1"
                                     value={feedbackRating || 5} 
                                     onChange={(e) => setFeedbackRating(parseInt(e.target.value))}
-                                    className="w-full h-3 bg-slate-200 rounded-full appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-500 transition-all z-20 relative"
+                                    className="w-full h-3 bg-slate-200 rounded-full appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-500 transition-all z-20 relative slider-custom"
                                     style={{
-                                        background: `linear-gradient(to right, #818cf8 0%, #6366f1 ${(feedbackRating || 5) * 10}%, #e2e8f0 ${(feedbackRating || 5) * 10}%, #e2e8f0 100%)`
+                                        background: `linear-gradient(to right, #818cf8 0%, #6366f1 ${((feedbackRating || 5) - 1) / 9 * 100}%, #e2e8f0 ${((feedbackRating || 5) - 1) / 9 * 100}%, #e2e8f0 100%)`
                                     }}
                                 />
                                 <div className="absolute inset-0 flex justify-between px-1 pointer-events-none z-10 items-center">
