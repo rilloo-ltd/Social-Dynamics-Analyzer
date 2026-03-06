@@ -43,7 +43,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId,
+          userId: userId as string, // Type assertion: userId is guaranteed to be string here
           orderId,
           tier: selectedTier,
           amount: parseFloat(tierPrices[selectedTier])
@@ -167,7 +167,9 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                     onApprove={async (data, actions) => {
                       if (!actions.order) return;
                       const details = await actions.order.capture();
-                      await handlePaymentSuccess(details.id);
+                      if (details.id) {
+                        await handlePaymentSuccess(details.id);
+                      }
                     }}
                     onError={(err) => {
                       console.error('PayPal error:', err);
@@ -224,7 +226,9 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                     onApprove={async (data, actions) => {
                       if (!actions.order) return;
                       const details = await actions.order.capture();
-                      await handlePaymentSuccess(details.id);
+                      if (details.id) {
+                        await handlePaymentSuccess(details.id);
+                      }
                     }}
                     onError={(err) => {
                       console.error('PayPal error:', err);
