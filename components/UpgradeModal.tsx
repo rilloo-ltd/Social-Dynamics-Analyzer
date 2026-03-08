@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Sparkles, Zap, TrendingUp } from 'lucide-react';
+import { Sparkles, Zap, TrendingUp, RefreshCw } from 'lucide-react';
 import { PayPalButtons } from '@paypal/react-paypal-js';
 import { useRouter } from 'next/navigation';
 
@@ -31,6 +31,34 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
   const tierPrices = {
     basic: '5.00',
     super: '30.00'
+  };
+
+  const handleReset = async () => {
+    if (!userId) return;
+
+    setIsProcessing(true);
+    try {
+      const response = await fetch('/api/reset-limit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        alert('✅ המגבלה אופסה בהצלחה! אתה יכול להמשיך להעלות קבצים.');
+        onClose();
+        router.refresh();
+      } else {
+        alert('שגיאה באיפוס המגבלה. אנא נסה שוב.');
+      }
+    } catch (error) {
+      console.error('Reset error:', error);
+      alert('שגיאה באיפוס המגבלה. אנא נסה שוב.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handlePaymentSuccess = async (orderId: string) => {
@@ -260,6 +288,16 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
 
           {/* Buttons */}
           <div className="flex flex-col gap-3">
+            {userId && (
+              <button
+                onClick={handleReset}
+                disabled={isProcessing}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 text-white font-bold hover:from-green-700 hover:to-emerald-700 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+              >
+                <RefreshCw className={`w-5 h-5 ${isProcessing ? 'animate-spin' : ''}`} />
+                <span>{isProcessing ? 'מאפס...' : 'אפס מגבלה (לבדיקות)'}</span>
+              </button>
+            )}
             <button
               onClick={onClose}
               className="w-full py-3 rounded-xl bg-white text-slate-600 font-medium border-2 border-slate-200 hover:bg-slate-50 transition-all cursor-pointer"

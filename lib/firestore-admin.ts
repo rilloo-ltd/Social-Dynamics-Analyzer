@@ -239,17 +239,17 @@ export async function getUserTier(userId: string): Promise<{
     const userDoc = await db.collection('users').doc(userId).get();
     
     if (!userDoc.exists) {
-      return { tier: 'free', maxDailyUploads: 2 };
+      return { tier: 'free', maxDailyUploads: 10 };
     }
     
     const data = userDoc.data();
     return {
       tier: data?.tier || 'free',
-      maxDailyUploads: data?.maxDailyUploads || 2
+      maxDailyUploads: data?.maxDailyUploads || 10
     };
   } catch (error) {
     console.error('Error getting user tier:', error);
-    return { tier: 'free', maxDailyUploads: 2 };
+    return { tier: 'free', maxDailyUploads: 10 };
   }
 }
 
