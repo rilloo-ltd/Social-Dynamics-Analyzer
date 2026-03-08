@@ -3,6 +3,29 @@ import 'server-only';
 // Server-side Firestore operations using Firebase Admin SDK
 // This file is for API routes and server actions
 
+// ============ ADMIN USERS ============
+/**
+ * Check if a user is an admin with unlimited processing privileges
+ * Admin status is stored in Firestore: users/{userId} with field isAdmin: true
+ */
+async function isAdminUser(userId: string): Promise<boolean> {
+  const db = getAdminDb();
+  
+  try {
+    const userDoc = await db.collection('users').doc(userId).get();
+    
+    if (!userDoc.exists) {
+      return false;
+    }
+    
+    const userData = userDoc.data();
+    return userData?.isAdmin === true;
+  } catch (error) {
+    console.error('Error checking admin status:', error);
+    return false;
+  }
+}
+
 let adminInitialized = false;
 let adminDb: any = null;
 
@@ -141,6 +164,11 @@ export async function updateChatOutput(userId: string, chatCode: string, type: s
 // ============ UPLOAD TRACKING ============
 
 export async function checkDailyUploadLimit(userId: string, maxUploads: number = 2) {
+  // Admin users have unlimited uploads
+  if (await isAdminUser(userId)) {
+    return { canUpload: true, currentCount: 0, remainingUploads: 999999 };
+  }
+
   const db = getAdminDb();
   const today = new Date().toISOString().split('T')[0];
   
@@ -161,6 +189,9 @@ export async function checkDailyUploadLimit(userId: string, maxUploads: number =
 }
 
 export async function incrementDailyUpload(userId: string, maxUploads: number = 2) {
+  // Admin users bypass limits but we still track their uploads
+  const isAdmin = await isAdminUser(userId);
+
   const db = getAdminDb();
   const today = new Date().toISOString().split('T')[0];
   
@@ -173,12 +204,13 @@ export async function incrementDailyUpload(userId: string, maxUploads: number = 
       uploadCount: 1,
       lastUpload: new Date().toISOString()
     });
-    return { success: true, currentCount: 1, remainingUploads: maxUploads - 1 };
+    return { success: true, currentCount: 1, remainingUploads: isAdmin ? 999999 : maxUploads - 1 };
   }
   
   const currentCount = statsDoc.data()?.uploadCount || 0;
   
-  if (currentCount >= maxUploads) {
+  // Only enforce limit for non-admin users
+  if (!isAdmin && currentCount >= maxUploads) {
     throw new Error('Daily upload limit reached');
   }
   
@@ -190,7 +222,7 @@ export async function incrementDailyUpload(userId: string, maxUploads: number = 
   return {
     success: true,
     currentCount: currentCount + 1,
-    remainingUploads: Math.max(0, maxUploads - currentCount - 1)
+    remainingUploads: isAdmin ? 999999 : Math.max(0, maxUploads - currentCount - 1)
   };
 }
 
@@ -239,17 +271,39 @@ export async function getUserTier(userId: string): Promise<{
     const userDoc = await db.collection('users').doc(userId).get();
     
     if (!userDoc.exists) {
-      return { tier: 'free', maxDailyUploads: 10 };
+      return { tier: 'free', maxDailyUploads: 2 };
     }
     
     const data = userDoc.data();
     return {
       tier: data?.tier || 'free',
-      maxDailyUploads: data?.maxDailyUploads || 10
+      maxDailyUploads: data?.maxDailyUploads || 2
     };
   } catch (error) {
     console.error('Error getting user tier:', error);
-    return { tier: 'free', maxDailyUploads: 10 };
+    return { tier: 'free', maxDailyUploads: 2 };
+  }
+}
+
+/**
+ * Set admin status for a user
+ * @param userId - User ID to grant/revoke admin privileges
+ * @param isAdmin - true to grant admin, false to revoke
+ */
+export async function setAdminStatus(userId: string, isAdmin: boolean) {
+  const db = getAdminDb();
+  
+  try {
+    await db.collection('users').doc(userId).set({
+      isAdmin,
+      adminUpdatedAt: new Date().toISOString()
+    }, { merge: true });
+    
+    console.log(`[Firestore] Updated user ${userId} admin status: ${isAdmin}`);
+    return { success: true, message: `Admin status ${isAdmin ? 'granted' : 'revoked'} for user ${userId}` };
+  } catch (error) {
+    console.error('Error setting admin status:', error);
+    throw new Error('Failed to set admin status');
   }
 }
 
