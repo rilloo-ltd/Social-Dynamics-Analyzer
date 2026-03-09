@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { PayPalProvider } from '@/components/PayPalProvider';
+import { ClientLayout } from '@/components/ClientLayout';
 
 export const metadata: Metadata = {
   title: 'הפסיכולוגית - Social Dynamics Analyzer',
@@ -24,9 +25,11 @@ export default function RootLayout({
         />
       </head>
       <body className="bg-gradient-to-br from-purple-50 via-blue-50 to-pink-50 min-h-screen">
-        <PayPalProvider>
-          {children}
-        </PayPalProvider>
+        <ClientLayout>
+          <PayPalProvider>
+            {children}
+          </PayPalProvider>
+        </ClientLayout>
       </body>
     </html>
   );

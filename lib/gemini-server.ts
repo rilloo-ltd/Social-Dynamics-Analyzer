@@ -4,6 +4,7 @@ import 'server-only';
 import { GoogleGenAI, Type } from "@google/genai";
 import { ChatMessage } from "@/types";
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
+import { PredictionServiceClient, helpers } from '@google-cloud/aiplatform';
 
 const getSystemInstruction = () => `
 את פסיכולוגית חברתית מומחית בעלת ניסיון רב בניתוח דינמיקה קבוצתית, תקשורת בין-אישית ופסיכולוגיה התנהגותית.
@@ -108,26 +109,6 @@ const getApiKey = async (): Promise<string> => {
   } catch (error) {
     console.error('Failed to access secret from Secret Manager:', error);
     throw new Error('Could not fetch GEMINI_API_KEY from Secret Manager');
-  }
-};
-
-const getOpenAiApiKey = async (): Promise<string> => {
-  if (process.env.OPENAI_API_KEY) {
-    return process.env.OPENAI_API_KEY;
-  }
-
-  try {
-    const client = new SecretManagerServiceClient();
-    const name = 'projects/social-analyzer-24750033-dc53d/secrets/OPENAI_API_KEY/versions/latest';
-    const [version] = await client.accessSecretVersion({ name });
-    const payload = version.payload?.data?.toString();
-    if (payload) {
-      return payload;
-    }
-    throw new Error('Secret payload is empty');
-  } catch (error) {
-    console.error('Failed to access OpenAI secret from Secret Manager:', error);
-    throw new Error('Could not fetch OPENAI_API_KEY from Secret Manager');
   }
 };
 
@@ -309,83 +290,217 @@ ${analysisText}
 
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
   try {
-    // Use OpenAI DALL-E 3 to generate the actual image
-    const { default: OpenAI } = await import('openai');
+    // Use Vertex AI Imagen for AI-powered image generation
+    console.log('[Vertex AI Imagen] Generating image with prompt:', prompt.substring(0, 100) + '...');
     
-    const apiKey = await getOpenAiApiKey();
+    const projectId = process.env.FIREBASE_PROJECT_ID || 'social-analyzer-24750033-dc53d';
+    const location = 'us-central1';
     
-    const openai = new OpenAI({
-      apiKey: apiKey,
+    // Try using HTTP REST API directly
+    const serviceAccountKey = require('../firebase-admin-key.json');
+    const { GoogleAuth } = require('google-auth-library');
+    
+    const auth = new GoogleAuth({
+      credentials: serviceAccountKey,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
     });
-
-    const fullPrompt = `Create a Disney Pixar style cartoon illustration: ${prompt}. 
-High quality, vibrant colors, expressive characters, professional animation style.`;
-
-    console.log('[DALL-E] Generating image with prompt:', fullPrompt.substring(0, 100) + '...');
-
-    const response = await openai.images.generate({
-      model: "dall-e-3",
-      prompt: fullPrompt,
-      n: 1,
-      size: "1024x1024",
-      quality: "standard",
-      response_format: "b64_json"
-    });
-
-    if (!response.data || response.data.length === 0) {
-      throw new Error('No image data returned from DALL-E');
+    
+    const client = await auth.getClient();
+    const accessToken = await client.getAccessToken();
+    
+    if (!accessToken.token) {
+      throw new Error('Failed to get access token');
     }
 
-    const imageData = response.data[0].b64_json;
+    const fullPrompt = `Disney Pixar style 3D animation. ${prompt}. 
+High quality, vibrant colors, expressive characters, professional animation style, 
+cute and friendly, colorful background, detailed lighting.`;
+
+    const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
     
-    if (!imageData) {
-      throw new Error('No image data returned from DALL-E');
+    const requestBody = {
+      instances: [
+        {
+          prompt: fullPrompt,
+        }
+      ],
+      parameters: {
+        sampleCount: 1,
+      }
+    };
+
+    console.log('[Vertex AI Imagen] Request endpoint:', endpoint);
+    console.log('[Vertex AI Imagen] Request body:', JSON.stringify(requestBody).substring(0, 200));
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[Vertex AI Imagen] HTTP Error:', response.status, response.statusText);
+      console.error('[Vertex AI Imagen] Error details:', errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
-    console.log('[DALL-E] Image generated successfully');
-    
-    // Return as base64 data URL
-    return `data:image/png;base64,${imageData}`;
+    const data = await response.json();
+    console.log('[Vertex AI Imagen] Response:', JSON.stringify(data).substring(0, 500));
+
+    if (data.predictions && data.predictions.length > 0) {
+      const prediction = data.predictions[0];
+      
+      // Check various possible field names
+      if (prediction.bytesBase64Encoded) {
+        console.log('[Vertex AI Imagen] Image generated successfully');
+        return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
+      }
+      
+      if (prediction.image) {
+        console.log('[Vertex AI Imagen] Image found in "image" field');
+        return `data:image/png;base64,${prediction.image}`;
+      }
+    }
+
+    console.error('[Vertex AI Imagen] Unexpected response structure:', JSON.stringify(data));
+    throw new Error('No image data in Vertex AI response');
     
   } catch (error: any) {
-    console.error('DALL-E image generation error:', error);
+    console.error('[Vertex AI Imagen] Error:', error.message);
+    console.error('[Vertex AI Imagen] Error details:', error);
     
-    // If OpenAI API key is missing or invalid
-    if (error?.status === 401 || error?.message?.includes('API key')) {
-      const errorMsg = 'OpenAI API key is missing or invalid. Please add OPENAI_API_KEY to .env.local';
-      console.error(errorMsg);
-      
-      // Return informative error placeholder
-      const errorSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-        <defs>
-          <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" style="stop-color:#fef3c7;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#fde68a;stop-opacity:1" />
-          </linearGradient>
-        </defs>
-        <rect width="1024" height="1024" fill="url(#bg)"/>
-        <rect x="112" y="300" width="800" height="400" rx="20" fill="white" opacity="0.9"/>
-        <text x="512" y="420" font-family="Arial" font-size="28" fill="#d97706" text-anchor="middle" font-weight="bold">⚠️ Missing OpenAI API Key</text>
-        <text x="512" y="480" font-family="Arial" font-size="18" fill="#92400e" text-anchor="middle">Please add your API key to .env.local:</text>
-        <text x="512" y="520" font-family="Arial" font-size="16" fill="#78350f" text-anchor="middle" font-family="monospace">OPENAI_API_KEY=your-key-here</text>
-        <text x="512" y="580" font-family="Arial" font-size="14" fill="#a16207" text-anchor="middle">Get your key from: platform.openai.com/api-keys</text>
-      </svg>`;
-      
-      const base64ErrorSvg = Buffer.from(errorSvg).toString('base64');
-      return `data:image/svg+xml;base64,${base64ErrorSvg}`;
-    }
+    // If Vertex AI fails, fall back to SVG
+    console.log('[Vertex AI Imagen] Falling back to SVG generation');
+    return generateSvgFallback(prompt);
+  }
+}
+
+// Fallback SVG generator
+function generateSvgFallback(prompt: string): string {
+  try {
+    const colors = [
+      { bg: '#FFE5E5', accent: '#FF6B6B', secondary: '#FF8787' },
+      { bg: '#E5F4FF', accent: '#4ECDC4', secondary: '#7FD8BE' },
+      { bg: '#FFF4E5', accent: '#FFB347', secondary: '#FFCB77' },
+      { bg: '#F0E5FF', accent: '#9B7EDE', secondary: '#B8A3E8' },
+      { bg: '#E5FFEF', accent: '#52C68A', secondary: '#7FD89D' }
+    ];
     
-    // Generic error placeholder
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    
+    const themes = prompt.toLowerCase();
+    const hasAnimal = /cat|dog|bird|lion|bear|elephant|rabbit|fox|deer/.test(themes);
+    const hasNature = /garden|forest|tree|flower|sun|cloud|sky|mountain/.test(themes);
+    const hasFriendship = /friend|together|group|happy|smile/.test(themes);
+    
+    let centerEmoji = '✨';
+    if (hasAnimal) centerEmoji = '🦊';
+    if (hasNature) centerEmoji = '🌸';
+    if (hasFriendship) centerEmoji = '💫';
+
+    const textLines = wrapTextToLines(prompt, 700, 24);
+    const textSvg = textLines.map((line, i) => 
+      `<text x="512" y="${620 + i * 32}" font-family="Arial, sans-serif" font-size="24" fill="${randomColor.secondary}" text-anchor="middle">${escapeXml(line)}</text>`
+    ).join('\n      ');
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+      <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:${randomColor.bg};stop-opacity:1" />
+          <stop offset="100%" style="stop-color:${randomColor.accent};stop-opacity:0.3" />
+        </linearGradient>
+        <filter id="shadow">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
+          <feOffset dx="0" dy="4" result="offsetblur"/>
+          <feComponentTransfer>
+            <feFuncA type="linear" slope="0.3"/>
+          </feComponentTransfer>
+          <feMerge>
+            <feMergeNode/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      
+      <rect width="1024" height="1024" fill="url(#bgGrad)"/>
+      
+      <circle cx="150" cy="150" r="80" fill="${randomColor.secondary}" opacity="0.4"/>
+      <circle cx="874" cy="200" r="60" fill="${randomColor.accent}" opacity="0.3"/>
+      <circle cx="200" cy="824" r="100" fill="${randomColor.secondary}" opacity="0.35"/>
+      <circle cx="824" cy="750" r="70" fill="${randomColor.accent}" opacity="0.3"/>
+      
+      <rect x="112" y="200" width="800" height="624" rx="40" fill="white" opacity="0.95" filter="url(#shadow)"/>
+      
+      <text x="512" y="420" font-size="160" text-anchor="middle">${centerEmoji}</text>
+      
+      <text x="512" y="560" font-family="Arial, sans-serif" font-size="32" fill="${randomColor.accent}" text-anchor="middle" font-weight="bold">Disney Pixar Style</text>
+      
+      ${textSvg}
+      
+      <rect x="312" y="740" width="400" height="4" rx="2" fill="${randomColor.accent}" opacity="0.6"/>
+      
+      <rect x="412" y="760" width="200" height="40" rx="20" fill="${randomColor.accent}"/>
+      <text x="512" y="787" font-family="Arial, sans-serif" font-size="18" fill="white" text-anchor="middle" font-weight="bold">AI Generated</text>
+    </svg>`;
+
+    console.log('[SVG Generator] Fallback illustration created');
+    
+    const base64Svg = Buffer.from(svg).toString('base64');
+    return `data:image/svg+xml;base64,${base64Svg}`;
+    
+  } catch (error: any) {
+    console.error('SVG fallback generation error:', error);
+    
     const errorSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
       <rect width="1024" height="1024" fill="#fee2e2"/>
       <text x="512" y="450" font-family="Arial" font-size="32" fill="#991b1b" text-anchor="middle" font-weight="bold">שגיאה ביצירת תמונה</text>
       <text x="512" y="510" font-family="Arial" font-size="20" fill="#dc2626" text-anchor="middle">אנא נסה שוב מאוחר יותר</text>
-      <text x="512" y="560" font-family="Arial" font-size="16" fill="#b91c1c" text-anchor="middle">${error?.message?.substring(0, 50) || 'Unknown error'}</text>
     </svg>`;
     
     const base64ErrorSvg = Buffer.from(errorSvg).toString('base64');
     return `data:image/svg+xml;base64,${base64ErrorSvg}`;
   }
+}
+
+// Helper function to wrap text into lines
+function wrapTextToLines(text: string, maxWidth: number, fontSize: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
+  const avgCharWidth = fontSize * 0.5;
+  const maxCharsPerLine = Math.floor(maxWidth / avgCharWidth);
+  
+  for (const word of words) {
+    const testLine = currentLine + (currentLine ? ' ' : '') + word;
+    if (testLine.length > maxCharsPerLine && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  
+  const displayLines = lines.slice(0, 4);
+  if (lines.length > 4) {
+    displayLines[3] = displayLines[3].substring(0, 40) + '...';
+  }
+  
+  return displayLines;
+}
+
+// Helper to escape XML special characters
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 export interface VisualAssetData {

@@ -9,6 +9,7 @@ import {
     User,
     AuthError
 } from "firebase/auth";
+import { analytics, MixpanelEvents } from './mixpanel';
 
 interface AuthResult {
     user?: User | null;
@@ -48,6 +49,8 @@ export const signInWithGoogle = async (): Promise<AuthResult> => {
 
 export const logOut = async (): Promise<{error?: string}> => {
   try {
+    analytics.track(MixpanelEvents.LOGOUT);
+    analytics.reset(); // Clear Mixpanel user data on logout
     await signOut(auth);
     return {};
   } catch (error) {

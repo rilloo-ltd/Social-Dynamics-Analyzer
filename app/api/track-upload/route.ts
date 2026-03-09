@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkDailyUploadLimit, incrementDailyUpload, getUserTier } from '@/lib/firestore-admin';
+import { checkDailyUploadLimit, incrementDailyUpload, getUserTier, ensureUserInitialized } from '@/lib/firestore-admin';
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,6 +8,9 @@ export async function POST(req: NextRequest) {
     if (!userId) {
       return NextResponse.json({ error: 'User ID required' }, { status: 400 });
     }
+
+    // Ensure user document exists with defaults before checking tier
+    await ensureUserInitialized(userId);
 
     // Get user's tier and max uploads from database
     const { maxDailyUploads } = await getUserTier(userId);

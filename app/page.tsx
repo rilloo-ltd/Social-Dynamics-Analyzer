@@ -13,6 +13,7 @@ import { AnalysisModal } from '@/components/AnalysisModal';
 import { GroupParticipantSelector } from '@/components/GroupParticipantSelector';
 import { HowToExport } from '@/components/HowToExport';
 import { UpgradeModal } from '@/components/UpgradeModal';
+import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon } from '@/components/Icons';
 import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText } from 'lucide-react';
 import { 
@@ -27,6 +28,16 @@ import {
 import AuthDetails from '@/components/AuthDetails';
 import { auth } from '@/lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { 
+  analytics, 
+  MixpanelEvents, 
+  trackFileUpload, 
+  trackAnalysis, 
+  trackShare, 
+  trackImageGeneration, 
+  trackFeedback,
+  trackButtonClick 
+} from '@/lib/mixpanel';
 
 export default function HomePage() {
   const router = useRouter();
@@ -59,6 +70,8 @@ export default function HomePage() {
   const [authChecking, setAuthChecking] = useState(true);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: 2 });
+  const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const [pendingAnalysis, setPendingAnalysis] = useState<{type: AnalysisType, participants?: string[]} | null>(null);
 
   useEffect(() => {
     fetch('/api/messages')
@@ -86,12 +99,18 @@ export default function HomePage() {
     try {
       const data = await logUploadAction(authUser.uid, participantsCount, tokenCount);
       setSessionId(data.sessionId);
+      
+      // Track in Mixpanel
+      trackFileUpload(participantsCount, tokenCount, authUser.uid);
     } catch (e) { console.error("Log upload failed", e); }
   };
 
   const logButton = async (buttonId: string) => {
     try {
       await logButtonClickAction(buttonId);
+      
+      // Track in Mixpanel
+      trackButtonClick(buttonId, undefined, authUser?.uid);
     } catch (e) { console.error("Log button failed", e); }
   };
   
@@ -99,6 +118,9 @@ export default function HomePage() {
     if (!sessionId || !authUser) return;
     try {
         await logShareAction(authUser.uid, sessionId, type, platform);
+        
+        // Track in Mixpanel
+        trackShare(platform, type, authUser.uid);
     } catch (e) { console.error("Log share failed", e); }
   };
 
@@ -106,6 +128,9 @@ export default function HomePage() {
     if (!sessionId || !authUser) return;
     try {
         await logImageGenerationAction(authUser.uid, sessionId, 'generated_cartoon_image');
+        
+        // Track in Mixpanel
+        trackImageGeneration('generated_cartoon_image', authUser.uid);
     } catch (e) { console.error("Log image generation failed", e); }
   };
 
@@ -113,6 +138,9 @@ export default function HomePage() {
     if (!sessionId || !authUser) return;
     try {
         await logFeedbackAction(authUser.uid, sessionId, rating, comment);
+        
+        // Track in Mixpanel
+        trackFeedback(rating, !!comment, authUser.uid);
     } catch (e) { console.error("Log feedback failed", e); }
   };
 
@@ -147,7 +175,7 @@ export default function HomePage() {
   };
 
   const storeChat = async (text: string) => {
-    if (!authUser) throw new Error('User not authenticated');
+    if (!authUser) return null; // Guest users don't need to store chat
     try {
       const data = await uploadChatAction(authUser.uid, text, isNewSessionMode);
       if (data.code) {
@@ -179,35 +207,42 @@ export default function HomePage() {
   };
 
   const handleFileLoaded = async (text: string) => {
-    // Check if user is logged in
-    if (!authUser) {
-      router.push('/login');
-      return;
-    }
-
-    // Check daily upload limit
-    try {
-      const checkResponse = await fetch('/api/track-upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: authUser.uid, action: 'check' })
-      });
-      
-      const checkData = await checkResponse.json();
-      
-      if (!checkData.canUpload) {
-        console.log('Upload limit reached, showing upgrade modal', checkData);
-        setUploadLimitData({
-          currentCount: checkData.currentCount,
-          maxUploads: checkData.maxUploads
+    // Allow file upload without login, but check limits for logged-in users
+    if (authUser) {
+      // Check daily upload limit for authenticated users
+      try {
+        const checkResponse = await fetch('/api/track-upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: authUser.uid, action: 'check' })
         });
-        setShowUpgradeModal(true);
-        return;
+        
+        if (!checkResponse.ok) {
+          const errorData = await checkResponse.json();
+          console.error('Upload check failed:', errorData);
+          
+          // If it's just a missing user document, continue (will be created on increment)
+          if (checkResponse.status !== 500) {
+            alert('אירעה שגיאה בבדיקת המגבלה היומית.');
+            return;
+          }
+        } else {
+          const checkData = await checkResponse.json();
+          
+          if (!checkData.canUpload) {
+            console.log('Upload limit reached, showing upgrade modal', checkData);
+            setUploadLimitData({
+              currentCount: checkData.currentCount,
+              maxUploads: checkData.maxUploads
+            });
+            setShowUpgradeModal(true);
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error checking upload limit:', error);
+        // Don't block upload on check error - just log it
       }
-    } catch (error) {
-      console.error('Error checking upload limit:', error);
-      alert('אירעה שגיאה בבדיקת המגבלה היומית.');
-      return;
     }
 
     setIsProcessingFile(true);
@@ -265,18 +300,28 @@ export default function HomePage() {
       const estimatedTokens = Math.ceil(formattedAnonymizedText.length / 4);
       console.log(`[App] Uploading text length: ${formattedAnonymizedText.length}, Estimated Tokens: ${estimatedTokens}`);
 
-      const code = await storeChat(formattedAnonymizedText);
-      await logUpload(parsed.participants.length, formattedAnonymizedText, estimatedTokens, code);
+      // Store chat and log upload only for authenticated users
+      let code = null;
+      if (authUser) {
+        code = await storeChat(formattedAnonymizedText);
+        await logUpload(parsed.participants.length, formattedAnonymizedText, estimatedTokens, code);
+      }
 
-      // Increment upload count after successful upload
-      try {
-        await fetch('/api/track-upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: authUser.uid, action: 'increment' })
-        });
-      } catch (error) {
-        console.error('Error incrementing upload count:', error);
+      // Increment upload count after successful upload (only for logged-in users)
+      if (authUser) {
+        try {
+          const incrementResponse = await fetch('/api/track-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: authUser.uid, action: 'increment' })
+          });
+          
+          if (!incrementResponse.ok) {
+            console.error('Failed to increment upload count');
+          }
+        } catch (error) {
+          console.error('Error incrementing upload count:', error);
+        }
       }
 
       const deanonymize = (t: string) => {
@@ -315,8 +360,25 @@ export default function HomePage() {
     return highlights[idx];
   };
 
-  const triggerAnalysis = async (type: AnalysisType, participants?: string[]) => {
-    logButton(type);
+  // Helper to check if cache exists for this analysis
+  const getCacheKey = (type: AnalysisType, participants?: string[]): string => {
+    if (type === AnalysisType.GROUP_DYNAMICS) {
+      return participants && participants.length > 0 
+        ? `group_dynamics:${participants.sort().join(',')}` 
+        : 'group_dynamics:all';
+    }
+    if (type === AnalysisType.ROMANTIC_DYNAMICS) {
+      return 'romantic_dynamics';
+    }
+    if (selectedUser && chatData) {
+      const anonUser = chatData.nameMap[selectedUser] || selectedUser;
+      return `full_analysis:${anonUser}`;
+    }
+    return '';
+  };
+
+  // Execute analysis with optional cache bypass
+  const executeAnalysis = async (type: AnalysisType, participants?: string[], bypassCache: boolean = false) => {
     if (!chatData) return;
 
     if (type === AnalysisType.GROUP_DYNAMICS) {
@@ -332,7 +394,7 @@ export default function HomePage() {
             : 'group_dynamics:all';
         
         let result = "";
-        if (cachedOutputs[cacheKey]) {
+        if (!bypassCache && cachedOutputs[cacheKey]) {
             console.log("Using cached group dynamics analysis");
             result = cachedOutputs[cacheKey].output;
         } else {
@@ -371,7 +433,7 @@ export default function HomePage() {
         // Check cache
         const cacheKey = 'romantic_dynamics';
         let result = "";
-        if (cachedOutputs[cacheKey]) {
+        if (!bypassCache && cachedOutputs[cacheKey]) {
             console.log("Using cached romantic dynamics analysis");
             result = cachedOutputs[cacheKey].output;
         } else {
@@ -400,7 +462,8 @@ export default function HomePage() {
     if (!selectedUser) return;
 
     // Check if we already have full analysis for this user in local state
-    if (userAnalysisData[selectedUser]) {
+    // Skip this check if we're explicitly regenerating (bypassCache=true)
+    if (!bypassCache && userAnalysisData[selectedUser]) {
       setActiveAnalysisType(type);
       return;
     }
@@ -417,7 +480,7 @@ export default function HomePage() {
       const cacheKey = `full_analysis:${anonUser}`;
       let rawResult: Record<string, string> = {};
 
-      if (cachedOutputs[cacheKey]) {
+      if (!bypassCache && cachedOutputs[cacheKey]) {
           console.log(`Using cached full analysis for ${anonUser}`);
           rawResult = cachedOutputs[cacheKey].output;
       } else {
@@ -452,6 +515,89 @@ export default function HomePage() {
       setUserAnalysisData(prev => ({ ...prev, [selectedUser]: finalData }));
     } catch (e: any) { alert(e.message); setActiveAnalysisType(null); }
     finally { setLoading(false); }
+  };
+
+  const triggerAnalysis = async (type: AnalysisType, participants?: string[]) => {
+    // Require login for AI analysis generation
+    if (!authUser) {
+      alert('יש להתחבר כדי ליצור ניתוח AI. אנא התחבר או הירשם כדי להמשיך.');
+      router.push('/login');
+      return;
+    }
+
+    logButton(type);
+    
+    // Track analysis start in Mixpanel
+    trackAnalysis(type, authUser.uid);
+    
+    if (!chatData) return;
+
+    // Check if cache exists for this analysis
+    const cacheKey = getCacheKey(type, participants);
+    if (cacheKey && cachedOutputs[cacheKey]) {
+      // Show confirmation modal
+      setPendingAnalysis({ type, participants });
+      setShowRegenerateConfirm(true);
+      return;
+    }
+
+    // No cache - execute directly
+    await executeAnalysis(type, participants, false);
+  };
+
+  const handleUseExistingAnalysis = () => {
+    if (pendingAnalysis) {
+      executeAnalysis(pendingAnalysis.type, pendingAnalysis.participants, false);
+    }
+    setShowRegenerateConfirm(false);
+    setPendingAnalysis(null);
+  };
+
+  const handleGenerateNewAnalysis = () => {
+    if (pendingAnalysis) {
+      // Clear cache and local state before regenerating
+      const cacheKey = getCacheKey(pendingAnalysis.type, pendingAnalysis.participants);
+      
+      // Clear the cache entry
+      if (cacheKey) {
+        setCachedOutputs(prev => {
+          const newCache = { ...prev };
+          delete newCache[cacheKey];
+          return newCache;
+        });
+      }
+      
+      // Clear local state based on analysis type
+      if (pendingAnalysis.type === AnalysisType.GROUP_DYNAMICS) {
+        setUserAnalysisData(prev => {
+          const newData = { ...prev };
+          delete newData.GROUP;
+          return newData;
+        });
+      } else if (pendingAnalysis.type === AnalysisType.ROMANTIC_DYNAMICS) {
+        setUserAnalysisData(prev => {
+          const newData = { ...prev };
+          delete newData.ROMANTIC;
+          return newData;
+        });
+      } else if (selectedUser) {
+        setUserAnalysisData(prev => {
+          const newData = { ...prev };
+          delete newData[selectedUser];
+          return newData;
+        });
+      }
+      
+      // Now execute analysis with cache bypass
+      executeAnalysis(pendingAnalysis.type, pendingAnalysis.participants, true);
+    }
+    setShowRegenerateConfirm(false);
+    setPendingAnalysis(null);
+  };
+
+  const handleCloseRegenerateModal = () => {
+    setShowRegenerateConfirm(false);
+    setPendingAnalysis(null);
   };
 
   useEffect(() => {
@@ -551,6 +697,13 @@ export default function HomePage() {
           currentCount={uploadLimitData.currentCount}
           maxUploads={uploadLimitData.maxUploads}
           userId={authUser?.uid}
+        />
+
+        <RegenerateConfirmModal
+          isOpen={showRegenerateConfirm}
+          onClose={handleCloseRegenerateModal}
+          onUseExisting={handleUseExistingAnalysis}
+          onGenerateNew={handleGenerateNewAnalysis}
         />
       </div>
     );
@@ -722,6 +875,13 @@ export default function HomePage() {
           maxUploads={uploadLimitData.maxUploads}
           userId={authUser?.uid}
         />
+
+        <RegenerateConfirmModal
+          isOpen={showRegenerateConfirm}
+          onClose={handleCloseRegenerateModal}
+          onUseExisting={handleUseExistingAnalysis}
+          onGenerateNew={handleGenerateNewAnalysis}
+        />
       </div>
     );
   }
@@ -849,6 +1009,13 @@ export default function HomePage() {
         currentCount={uploadLimitData.currentCount}
         maxUploads={uploadLimitData.maxUploads}
         userId={authUser?.uid}
+      />
+
+      <RegenerateConfirmModal
+        isOpen={showRegenerateConfirm}
+        onClose={handleCloseRegenerateModal}
+        onUseExisting={handleUseExistingAnalysis}
+        onGenerateNew={handleGenerateNewAnalysis}
       />
     </div>
   );

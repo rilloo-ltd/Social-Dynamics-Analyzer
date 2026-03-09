@@ -3,6 +3,7 @@
 
 import React, { useState } from 'react';
 import { signUpWithEmail } from '../lib/auth';
+import { analytics, MixpanelEvents } from '@/lib/mixpanel';
 
 const SignUp = () => {
   const [email, setEmail] = useState('');
@@ -14,6 +15,9 @@ const SignUp = () => {
     const { error } = await signUpWithEmail(email, password);
     if (error) {
       setError(error);
+      analytics.track(MixpanelEvents.SIGNUP + ' Failed', { error });
+    } else {
+      analytics.track(MixpanelEvents.SIGNUP, { method: 'email' });
     }
   };
 

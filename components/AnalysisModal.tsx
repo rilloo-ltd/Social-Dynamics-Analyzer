@@ -214,7 +214,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   }, [isOpen]);
 
   const handleFeedbackSubmit = () => {
-    if (feedbackRating && onLogFeedback) {
+    if (feedbackRating !== null && onLogFeedback) {
         onLogFeedback(feedbackRating, feedbackComment);
         setFeedbackSubmitted(true);
     }
@@ -474,7 +474,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                     <div className="mt-12 mb-8 p-8 bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-3xl text-center shadow-sm relative overflow-hidden">
                         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500"></div>
                         <h4 className="text-2xl font-black text-slate-800 mb-2">עד כמה הניתוח היה מדויק?</h4>
-                        <p className="text-slate-500 text-sm mb-8">דרגו אותנו מ-1 עד 10</p>
+                        <p className="text-slate-500 text-sm mb-8">דרגו אותנו מ-1 עד 9</p>
                         
                         <div className="relative max-w-md mx-auto mb-8 px-4" dir="ltr">
                             <div className="flex justify-between text-xs font-bold text-slate-400 mb-4 uppercase tracking-widest">
@@ -486,35 +486,35 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                                 <input 
                                     type="range" 
                                     min="1" 
-                                    max="10" 
+                                    max="9" 
                                     step="1"
-                                    value={feedbackRating || 5} 
+                                    value={feedbackRating !== null ? feedbackRating : 5} 
                                     onChange={(e) => setFeedbackRating(parseInt(e.target.value))}
                                     className="w-full h-3 bg-slate-200 rounded-full appearance-none cursor-pointer accent-indigo-600 hover:accent-indigo-500 transition-all z-20 relative slider-custom"
                                     style={{
-                                        background: `linear-gradient(to right, #818cf8 0%, #6366f1 ${((feedbackRating || 5) - 1) / 9 * 100}%, #e2e8f0 ${((feedbackRating || 5) - 1) / 9 * 100}%, #e2e8f0 100%)`
+                                        background: `linear-gradient(to right, #818cf8 0%, #6366f1 ${((feedbackRating !== null ? feedbackRating : 5) - 1) / 8 * 100}%, #e2e8f0 ${((feedbackRating !== null ? feedbackRating : 5) - 1) / 8 * 100}%, #e2e8f0 100%)`
                                     }}
                                 />
                                 <div className="absolute inset-0 flex justify-between px-1 pointer-events-none z-10 items-center">
-                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
-                                        <div key={n} className={`w-1 h-1 rounded-full ${feedbackRating && feedbackRating >= n ? 'bg-indigo-200' : 'bg-slate-300'}`}></div>
+                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
+                                        <div key={n} className={`w-1 h-1 rounded-full ${feedbackRating !== null && feedbackRating >= n ? 'bg-indigo-200' : 'bg-slate-300'}`}></div>
                                     ))}
                                 </div>
                             </div>
                             
                             <div className="mt-4 h-12">
                                 <span className={`inline-flex items-center justify-center w-12 h-12 rounded-full text-xl font-black shadow-sm transition-all transform duration-300 ${
-                                    !feedbackRating ? 'bg-slate-100 text-slate-400 scale-90' :
+                                    feedbackRating === null ? 'bg-slate-100 text-slate-400 scale-90' :
                                     feedbackRating < 4 ? 'bg-red-100 text-red-600 rotate-[-6deg] scale-100' :
-                                    feedbackRating < 8 ? 'bg-amber-100 text-amber-600 rotate-[0deg] scale-110' :
+                                    feedbackRating < 7 ? 'bg-amber-100 text-amber-600 rotate-[0deg] scale-110' :
                                     'bg-emerald-100 text-emerald-600 rotate-[6deg] scale-125'
                                 }`}>
-                                    {feedbackRating || 5}
+                                    {feedbackRating !== null ? feedbackRating : 5}
                                 </span>
                             </div>
                         </div>
 
-                        {feedbackRating && (
+                        {feedbackRating !== null && (
                             <div className="animate-fadeIn space-y-4 max-w-md mx-auto">
                                 <textarea
                                     value={feedbackComment}

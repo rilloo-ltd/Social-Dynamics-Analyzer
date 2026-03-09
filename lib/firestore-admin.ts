@@ -286,6 +286,34 @@ export async function getUserTier(userId: string): Promise<{
 }
 
 /**
+ * Initialize user document with default values if it doesn't exist
+ * This ensures new users have a clean state in Firestore
+ */
+export async function ensureUserInitialized(userId: string, email?: string) {
+  const db = getAdminDb();
+  
+  try {
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    
+    if (!userDoc.exists) {
+      // Create user document with defaults
+      await userRef.set({
+        tier: 'free',
+        maxDailyUploads: 2,
+        isAdmin: false,
+        createdAt: new Date().toISOString(),
+        ...(email && { email })
+      });
+      console.log(`[Firestore] Initialized new user document for ${userId}`);
+    }
+  } catch (error) {
+    console.error('Error initializing user document:', error);
+    // Don't throw - this is a best-effort initialization
+  }
+}
+
+/**
  * Set admin status for a user
  * @param userId - User ID to grant/revoke admin privileges
  * @param isAdmin - true to grant admin, false to revoke

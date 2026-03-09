@@ -3,6 +3,7 @@
 
 import React, { useState } from 'react';
 import { signInWithEmail, signInWithGoogle } from '../lib/auth';
+import { analytics, MixpanelEvents } from '@/lib/mixpanel';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -14,6 +15,9 @@ const Login = () => {
     const { error } = await signInWithEmail(email, password);
     if (error) {
       setError(error);
+      analytics.track(MixpanelEvents.LOGIN + ' Failed', { method: 'email', error });
+    } else {
+      analytics.track(MixpanelEvents.LOGIN, { method: 'email' });
     }
   };
 
@@ -21,6 +25,9 @@ const Login = () => {
     const { error } = await signInWithGoogle();
     if (error) {
       setError(error);
+      analytics.track(MixpanelEvents.LOGIN + ' Failed', { method: 'google', error });
+    } else {
+      analytics.track(MixpanelEvents.LOGIN, { method: 'google' });
     }
   };
 
