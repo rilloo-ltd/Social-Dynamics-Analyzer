@@ -299,104 +299,72 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
   
   console.log('[Vertex AI Imagen] Project ID:', projectId);
   console.log('[Vertex AI Imagen] Location:', location);
-  
-  // Use Google Auth with environment-specific credentials
-  const { GoogleAuth } = require('google-auth-library');
-  
-  let auth;
-  
-  // In production (Firebase App Hosting), use default credentials
-  // In local development, use the service account key file
-  try {
-    // Try to load service account key for local development
-    const serviceAccountKey = require('../firebase-admin-key.json');
-    auth = new GoogleAuth({
-      credentials: serviceAccountKey,
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-    console.log('[Vertex AI Imagen] ✓ Using local service account credentials');
-  } catch (error) {
-    // In production, use Application Default Credentials (ADC)
-    auth = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-    console.log('[Vertex AI Imagen] ✓ Using Application Default Credentials (production)');
-  }
-  
-  console.log('[Vertex AI Imagen] Getting access token...');
-  const client = await auth.getClient();
-  const accessToken = await client.getAccessToken();
-  
-  if (!accessToken.token) {
-    console.error('[Vertex AI Imagen] ✗ Failed to get access token');
-    throw new Error('Failed to get access token for Vertex AI');
-  }
-  console.log('[Vertex AI Imagen] ✓ Access token obtained');
 
   const fullPrompt = `Disney Pixar style 3D animation. ${prompt}. 
 High quality, vibrant colors, expressive characters, professional animation style, 
 cute and friendly, colorful background, detailed lighting.`;
 
-  // Use imagegeneration model with generateImages endpoint
-  const model = 'imagegeneration@006';
-  const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predict`;
-  
-  const requestBody = {
-    instances: [
-      {
-        prompt: fullPrompt,
-      }
-    ],
-    parameters: {
-      sampleCount: 1,
-    }
-  };
-
-  console.log('[Vertex AI Imagen] API Endpoint:', endpoint);
-  console.log('[Vertex AI Imagen] Sending request to Vertex AI...');
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(requestBody),
+  // Initialize the Prediction Service Client
+  const predictionServiceClient = new PredictionServiceClient({
+    apiEndpoint: `${location}-aiplatform.googleapis.com`,
   });
 
-  console.log('[Vertex AI Imagen] Response status:', response.status, response.statusText);
+  // Construct the resource name for the model
+  const endpoint = `projects/${projectId}/locations/${location}/publishers/google/models/imagegeneration@006`;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('[Vertex AI Imagen] ✗ HTTP Error:', response.status, response.statusText);
-    console.error('[Vertex AI Imagen] ✗ Error details:', errorText);
-    throw new Error(`Vertex AI returned ${response.status}: ${errorText}`);
-  }
+  console.log('[Vertex AI Imagen] Using SDK endpoint:', endpoint);
 
-  const data = await response.json();
-  console.log('[Vertex AI Imagen] Response data:', JSON.stringify(data).substring(0, 500));
+  const instanceValue = helpers.toValue({
+    prompt: fullPrompt,
+  });
 
-  if (data.predictions && data.predictions.length > 0) {
-    const prediction = data.predictions[0];
-    console.log('[Vertex AI Imagen] Prediction keys:', Object.keys(prediction));
+  const instances = [instanceValue!];
+
+  const parameter = {
+    sampleCount: 1,
+  };
+  const parameters = helpers.toValue(parameter);
+
+  const request = {
+    endpoint,
+    instances,
+    parameters,
+  };
+
+  console.log('[Vertex AI Imagen] Sending prediction request...');
+
+  try {
+    const [response] = await predictionServiceClient.predict(request);
     
-    // Check various possible field names
-    if (prediction.bytesBase64Encoded) {
+    console.log('[Vertex AI Imagen] ✓ Response received');
+    console.log('[Vertex AI Imagen] Predictions:', response.predictions?.length || 0);
+
+    if (!response.predictions || response.predictions.length === 0) {
+      console.error('[Vertex AI Imagen] ✗ No predictions in response');
+      throw new Error('Vertex AI response contained no predictions');
+    }
+
+    const prediction = response.predictions[0];
+    const predictionObj = helpers.fromValue(prediction);
+    
+    console.log('[Vertex AI Imagen] Prediction keys:', Object.keys(predictionObj || {}));
+
+    // Check for image data in various formats
+    if (predictionObj.bytesBase64Encoded) {
       console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded');
-      return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
-    }
-    
-    if (prediction.image) {
+      return `data:image/png;base64,${predictionObj.bytesBase64Encoded}`;
+    } else if (predictionObj.image) {
       console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via image field');
-      return `data:image/png;base64,${prediction.image}`;
+      return `data:image/png;base64,${predictionObj.image}`;
+    } else {
+      console.error('[Vertex AI Imagen] ✗ Unexpected response format:', JSON.stringify(predictionObj).substring(0, 500));
+      throw new Error('Unable to extract image from Vertex AI response');
     }
-    
-    console.error('[Vertex AI Imagen] ✗ Prediction object:', JSON.stringify(prediction));
-    throw new Error('Image data not found in expected fields (bytesBase64Encoded or image)');
+  } catch (error: any) {
+    console.error('[Vertex AI Imagen] ✗ Error during prediction:', error.message);
+    console.error('[Vertex AI Imagen] ✗ Error details:', error);
+    throw new Error(`Image generation failed: ${error.message}`);
   }
-
-  console.error('[Vertex AI Imagen] ✗ No predictions in response:', JSON.stringify(data));
-  throw new Error('Vertex AI response contained no predictions');
 }
 
 export interface VisualAssetData {
