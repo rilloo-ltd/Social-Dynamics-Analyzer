@@ -1,0 +1,39 @@
+# Firebase App Hosting configuration
+# This file tells Firebase which secrets to expose as environment variables during build
+
+runConfig:
+  # CPU and memory allocation for the deployed app
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 4
+
+env:
+  # Build-time environment variables (available during 'npm run build')
+  # These are injected into the Next.js client bundle
+  
+  # Mixpanel token (public, safe to expose)
+  - variable: NEXT_PUBLIC_MIXPANEL_TOKEN
+    secret: NEXT_PUBLIC_MIXPANEL_TOKEN
+    
+  # PayPal Client ID (public, safe to expose)
+  - variable: NEXT_PUBLIC_PAYPAL_CLIENT_ID
+    secret: NEXT_PUBLIC_PAYPAL_CLIENT_ID
+  
+  # Runtime environment variables (available to server-side code)
+  
+  # Gemini API Key (already working via Secret Manager)
+  - variable: GEMINI_API_KEY
+    secret: GEMINI_API_KEY
+    
+  # Firebase Project ID
+  - variable: FIREBASE_PROJECT_ID
+    secret: FIREBASE_PROJECT_ID
+    
+  # PayPal Secret (server-side only)
+  - variable: PAYPAL_SECRET
+    secret: PAYPAL_SECRET
+    
+  # PayPal API URL
+  - variable: PAYPAL_API_URL
+    secret: PAYPAL_API_URL
