@@ -289,240 +289,112 @@ ${analysisText}
 }
 
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
+  console.log('='.repeat(80));
+  console.log('[Vertex AI Imagen] FUNCTION CALLED - Starting image generation');
+  console.log('[Vertex AI Imagen] Prompt:', prompt.substring(0, 200) + '...');
+  console.log('='.repeat(80));
+  
+  const projectId = process.env.FIREBASE_PROJECT_ID || 'social-analyzer-24750033-dc53d';
+  const location = 'us-central1';
+  
+  console.log('[Vertex AI Imagen] Project ID:', projectId);
+  console.log('[Vertex AI Imagen] Location:', location);
+  
+  // Use Google Auth with environment-specific credentials
+  const { GoogleAuth } = require('google-auth-library');
+  
+  let auth;
+  
+  // In production (Firebase App Hosting), use default credentials
+  // In local development, use the service account key file
   try {
-    // Use Vertex AI Imagen for AI-powered image generation
-    console.log('[Vertex AI Imagen] Generating image with prompt:', prompt.substring(0, 100) + '...');
-    
-    const projectId = process.env.FIREBASE_PROJECT_ID || 'social-analyzer-24750033-dc53d';
-    const location = 'us-central1';
-    
-    // Use Google Auth with environment-specific credentials
-    const { GoogleAuth } = require('google-auth-library');
-    
-    let auth;
-    
-    // In production (Firebase App Hosting), use default credentials
-    // In local development, use the service account key file
-    try {
-      // Try to load service account key for local development
-      const serviceAccountKey = require('../firebase-admin-key.json');
-      auth = new GoogleAuth({
-        credentials: serviceAccountKey,
-        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-      });
-      console.log('[Vertex AI Imagen] Using local service account credentials');
-    } catch (error) {
-      // In production, use Application Default Credentials (ADC)
-      auth = new GoogleAuth({
-        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-      });
-      console.log('[Vertex AI Imagen] Using Application Default Credentials (production)');
-    }
-    
-    const client = await auth.getClient();
-    const accessToken = await client.getAccessToken();
-    
-    if (!accessToken.token) {
-      throw new Error('Failed to get access token');
-    }
+    // Try to load service account key for local development
+    const serviceAccountKey = require('../firebase-admin-key.json');
+    auth = new GoogleAuth({
+      credentials: serviceAccountKey,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    console.log('[Vertex AI Imagen] ✓ Using local service account credentials');
+  } catch (error) {
+    // In production, use Application Default Credentials (ADC)
+    auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    console.log('[Vertex AI Imagen] ✓ Using Application Default Credentials (production)');
+  }
+  
+  console.log('[Vertex AI Imagen] Getting access token...');
+  const client = await auth.getClient();
+  const accessToken = await client.getAccessToken();
+  
+  if (!accessToken.token) {
+    console.error('[Vertex AI Imagen] ✗ Failed to get access token');
+    throw new Error('Failed to get access token for Vertex AI');
+  }
+  console.log('[Vertex AI Imagen] ✓ Access token obtained');
 
-    const fullPrompt = `Disney Pixar style 3D animation. ${prompt}. 
+  const fullPrompt = `Disney Pixar style 3D animation. ${prompt}. 
 High quality, vibrant colors, expressive characters, professional animation style, 
 cute and friendly, colorful background, detailed lighting.`;
 
-    const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
-    
-    const requestBody = {
-      instances: [
-        {
-          prompt: fullPrompt,
-        }
-      ],
-      parameters: {
-        sampleCount: 1,
-      }
-    };
-
-    console.log('[Vertex AI Imagen] Request endpoint:', endpoint);
-    console.log('[Vertex AI Imagen] Request body:', JSON.stringify(requestBody).substring(0, 200));
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[Vertex AI Imagen] HTTP Error:', response.status, response.statusText);
-      console.error('[Vertex AI Imagen] Error details:', errorText);
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    console.log('[Vertex AI Imagen] Response:', JSON.stringify(data).substring(0, 500));
-
-    if (data.predictions && data.predictions.length > 0) {
-      const prediction = data.predictions[0];
-      
-      // Check various possible field names
-      if (prediction.bytesBase64Encoded) {
-        console.log('[Vertex AI Imagen] Image generated successfully');
-        return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
-      }
-      
-      if (prediction.image) {
-        console.log('[Vertex AI Imagen] Image found in "image" field');
-        return `data:image/png;base64,${prediction.image}`;
-      }
-    }
-
-    console.error('[Vertex AI Imagen] Unexpected response structure:', JSON.stringify(data));
-    throw new Error('No image data in Vertex AI response');
-    
-  } catch (error: any) {
-    console.error('[Vertex AI Imagen] CRITICAL ERROR - Image generation failed');
-    console.error('[Vertex AI Imagen] Error message:', error.message);
-    console.error('[Vertex AI Imagen] Error stack:', error.stack);
-    console.error('[Vertex AI Imagen] Full error object:', JSON.stringify(error, null, 2));
-    
-    // Check if it's a permission error
-    if (error.message?.includes('Permission') || error.message?.includes('403')) {
-      console.error('[Vertex AI Imagen] Permission denied. Please enable Vertex AI API and grant permissions.');
-      console.error('[Vertex AI Imagen] Run: gcloud services enable aiplatform.googleapis.com --project=social-analyzer-24750033-dc53d');
-    }
-    
-    // If Vertex AI fails, fall back to SVG
-    console.log('[Vertex AI Imagen] Falling back to SVG generation due to error');
-    return generateSvgFallback(prompt);
-  }
-}
-
-// Fallback SVG generator
-function generateSvgFallback(prompt: string): string {
-  try {
-    const colors = [
-      { bg: '#FFE5E5', accent: '#FF6B6B', secondary: '#FF8787' },
-      { bg: '#E5F4FF', accent: '#4ECDC4', secondary: '#7FD8BE' },
-      { bg: '#FFF4E5', accent: '#FFB347', secondary: '#FFCB77' },
-      { bg: '#F0E5FF', accent: '#9B7EDE', secondary: '#B8A3E8' },
-      { bg: '#E5FFEF', accent: '#52C68A', secondary: '#7FD89D' }
-    ];
-    
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
-    
-    const themes = prompt.toLowerCase();
-    const hasAnimal = /cat|dog|bird|lion|bear|elephant|rabbit|fox|deer/.test(themes);
-    const hasNature = /garden|forest|tree|flower|sun|cloud|sky|mountain/.test(themes);
-    const hasFriendship = /friend|together|group|happy|smile/.test(themes);
-    
-    let centerEmoji = '✨';
-    if (hasAnimal) centerEmoji = '🦊';
-    if (hasNature) centerEmoji = '🌸';
-    if (hasFriendship) centerEmoji = '💫';
-
-    const textLines = wrapTextToLines(prompt, 700, 24);
-    const textSvg = textLines.map((line, i) => 
-      `<text x="512" y="${620 + i * 32}" font-family="Arial, sans-serif" font-size="24" fill="${randomColor.secondary}" text-anchor="middle">${escapeXml(line)}</text>`
-    ).join('\n      ');
-
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-      <defs>
-        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:${randomColor.bg};stop-opacity:1" />
-          <stop offset="100%" style="stop-color:${randomColor.accent};stop-opacity:0.3" />
-        </linearGradient>
-        <filter id="shadow">
-          <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
-          <feOffset dx="0" dy="4" result="offsetblur"/>
-          <feComponentTransfer>
-            <feFuncA type="linear" slope="0.3"/>
-          </feComponentTransfer>
-          <feMerge>
-            <feMergeNode/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
-      </defs>
-      
-      <rect width="1024" height="1024" fill="url(#bgGrad)"/>
-      
-      <circle cx="150" cy="150" r="80" fill="${randomColor.secondary}" opacity="0.4"/>
-      <circle cx="874" cy="200" r="60" fill="${randomColor.accent}" opacity="0.3"/>
-      <circle cx="200" cy="824" r="100" fill="${randomColor.secondary}" opacity="0.35"/>
-      <circle cx="824" cy="750" r="70" fill="${randomColor.accent}" opacity="0.3"/>
-      
-      <rect x="112" y="200" width="800" height="624" rx="40" fill="white" opacity="0.95" filter="url(#shadow)"/>
-      
-      <text x="512" y="420" font-size="160" text-anchor="middle">${centerEmoji}</text>
-      
-      <text x="512" y="560" font-family="Arial, sans-serif" font-size="32" fill="${randomColor.accent}" text-anchor="middle" font-weight="bold">Disney Pixar Style</text>
-      
-      ${textSvg}
-      
-      <rect x="312" y="740" width="400" height="4" rx="2" fill="${randomColor.accent}" opacity="0.6"/>
-      
-      <rect x="412" y="760" width="200" height="40" rx="20" fill="${randomColor.accent}"/>
-      <text x="512" y="787" font-family="Arial, sans-serif" font-size="18" fill="white" text-anchor="middle" font-weight="bold">AI Generated</text>
-    </svg>`;
-
-    console.log('[SVG Generator] Fallback illustration created');
-    
-    const base64Svg = Buffer.from(svg).toString('base64');
-    return `data:image/svg+xml;base64,${base64Svg}`;
-    
-  } catch (error: any) {
-    console.error('SVG fallback generation error:', error);
-    
-    const errorSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-      <rect width="1024" height="1024" fill="#fee2e2"/>
-      <text x="512" y="450" font-family="Arial" font-size="32" fill="#991b1b" text-anchor="middle" font-weight="bold">שגיאה ביצירת תמונה</text>
-      <text x="512" y="510" font-family="Arial" font-size="20" fill="#dc2626" text-anchor="middle">אנא נסה שוב מאוחר יותר</text>
-    </svg>`;
-    
-    const base64ErrorSvg = Buffer.from(errorSvg).toString('base64');
-    return `data:image/svg+xml;base64,${base64ErrorSvg}`;
-  }
-}
-
-// Helper function to wrap text into lines
-function wrapTextToLines(text: string, maxWidth: number, fontSize: number): string[] {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let currentLine = '';
-  const avgCharWidth = fontSize * 0.5;
-  const maxCharsPerLine = Math.floor(maxWidth / avgCharWidth);
+  const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagen-3.0-generate-001:predict`;
   
-  for (const word of words) {
-    const testLine = currentLine + (currentLine ? ' ' : '') + word;
-    if (testLine.length > maxCharsPerLine && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-    } else {
-      currentLine = testLine;
+  const requestBody = {
+    instances: [
+      {
+        prompt: fullPrompt,
+      }
+    ],
+    parameters: {
+      sampleCount: 1,
     }
-  }
-  if (currentLine) lines.push(currentLine);
-  
-  const displayLines = lines.slice(0, 4);
-  if (lines.length > 4) {
-    displayLines[3] = displayLines[3].substring(0, 40) + '...';
-  }
-  
-  return displayLines;
-}
+  };
 
-// Helper to escape XML special characters
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  console.log('[Vertex AI Imagen] API Endpoint:', endpoint);
+  console.log('[Vertex AI Imagen] Sending request to Vertex AI...');
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  console.log('[Vertex AI Imagen] Response status:', response.status, response.statusText);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[Vertex AI Imagen] ✗ HTTP Error:', response.status, response.statusText);
+    console.error('[Vertex AI Imagen] ✗ Error details:', errorText);
+    throw new Error(`Vertex AI returned ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  console.log('[Vertex AI Imagen] Response data:', JSON.stringify(data).substring(0, 500));
+
+  if (data.predictions && data.predictions.length > 0) {
+    const prediction = data.predictions[0];
+    console.log('[Vertex AI Imagen] Prediction keys:', Object.keys(prediction));
+    
+    // Check various possible field names
+    if (prediction.bytesBase64Encoded) {
+      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded');
+      return `data:image/png;base64,${prediction.bytesBase64Encoded}`;
+    }
+    
+    if (prediction.image) {
+      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via image field');
+      return `data:image/png;base64,${prediction.image}`;
+    }
+    
+    console.error('[Vertex AI Imagen] ✗ Prediction object:', JSON.stringify(prediction));
+    throw new Error('Image data not found in expected fields (bytesBase64Encoded or image)');
+  }
+
+  console.error('[Vertex AI Imagen] ✗ No predictions in response:', JSON.stringify(data));
+  throw new Error('Vertex AI response contained no predictions');
 }
 
 export interface VisualAssetData {
