@@ -296,14 +296,28 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
     const projectId = process.env.FIREBASE_PROJECT_ID || 'social-analyzer-24750033-dc53d';
     const location = 'us-central1';
     
-    // Try using HTTP REST API directly
-    const serviceAccountKey = require('../firebase-admin-key.json');
+    // Use Google Auth with environment-specific credentials
     const { GoogleAuth } = require('google-auth-library');
     
-    const auth = new GoogleAuth({
-      credentials: serviceAccountKey,
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
+    let auth;
+    
+    // In production (Firebase App Hosting), use default credentials
+    // In local development, use the service account key file
+    try {
+      // Try to load service account key for local development
+      const serviceAccountKey = require('../firebase-admin-key.json');
+      auth = new GoogleAuth({
+        credentials: serviceAccountKey,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      });
+      console.log('[Vertex AI Imagen] Using local service account credentials');
+    } catch (error) {
+      // In production, use Application Default Credentials (ADC)
+      auth = new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      });
+      console.log('[Vertex AI Imagen] Using Application Default Credentials (production)');
+    }
     
     const client = await auth.getClient();
     const accessToken = await client.getAccessToken();
