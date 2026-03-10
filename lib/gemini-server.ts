@@ -384,11 +384,19 @@ cute and friendly, colorful background, detailed lighting.`;
     throw new Error('No image data in Vertex AI response');
     
   } catch (error: any) {
-    console.error('[Vertex AI Imagen] Error:', error.message);
-    console.error('[Vertex AI Imagen] Error details:', error);
+    console.error('[Vertex AI Imagen] CRITICAL ERROR - Image generation failed');
+    console.error('[Vertex AI Imagen] Error message:', error.message);
+    console.error('[Vertex AI Imagen] Error stack:', error.stack);
+    console.error('[Vertex AI Imagen] Full error object:', JSON.stringify(error, null, 2));
+    
+    // Check if it's a permission error
+    if (error.message?.includes('Permission') || error.message?.includes('403')) {
+      console.error('[Vertex AI Imagen] Permission denied. Please enable Vertex AI API and grant permissions.');
+      console.error('[Vertex AI Imagen] Run: gcloud services enable aiplatform.googleapis.com --project=social-analyzer-24750033-dc53d');
+    }
     
     // If Vertex AI fails, fall back to SVG
-    console.log('[Vertex AI Imagen] Falling back to SVG generation');
+    console.log('[Vertex AI Imagen] Falling back to SVG generation due to error');
     return generateSvgFallback(prompt);
   }
 }
