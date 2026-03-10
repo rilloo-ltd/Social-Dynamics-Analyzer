@@ -345,19 +345,24 @@ cute and friendly, colorful background, detailed lighting.`;
     }
 
     const prediction = response.predictions[0];
-    const predictionObj = helpers.fromValue(prediction);
     
-    console.log('[Vertex AI Imagen] Prediction keys:', Object.keys(predictionObj || {}));
+    // Access the struct value directly to avoid protobuf type issues
+    const predictionStruct = prediction?.structValue?.fields || {};
+    
+    console.log('[Vertex AI Imagen] Prediction keys:', Object.keys(predictionStruct));
 
     // Check for image data in various formats
-    if (predictionObj.bytesBase64Encoded) {
+    const bytesField = predictionStruct['bytesBase64Encoded']?.stringValue;
+    const imageField = predictionStruct['image']?.stringValue;
+    
+    if (bytesField) {
       console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded');
-      return `data:image/png;base64,${predictionObj.bytesBase64Encoded}`;
-    } else if (predictionObj.image) {
+      return `data:image/png;base64,${bytesField}`;
+    } else if (imageField) {
       console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via image field');
-      return `data:image/png;base64,${predictionObj.image}`;
+      return `data:image/png;base64,${imageField}`;
     } else {
-      console.error('[Vertex AI Imagen] ✗ Unexpected response format:', JSON.stringify(predictionObj).substring(0, 500));
+      console.error('[Vertex AI Imagen] ✗ Unexpected response format. Available fields:', Object.keys(predictionStruct));
       throw new Error('Unable to extract image from Vertex AI response');
     }
   } catch (error: any) {
