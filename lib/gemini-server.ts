@@ -337,8 +337,8 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
 High quality, vibrant colors, expressive characters, professional animation style, 
 cute and friendly, colorful background, detailed lighting.`;
 
-  // Use Imagen 3 Fast model with correct endpoint
-  const model = 'imagen-3.0-fast-generate-001';
+  // Use imagegeneration model with generateImages endpoint
+  const model = 'imagegeneration@006';
   const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predict`;
   
   const requestBody = {
@@ -349,9 +349,6 @@ cute and friendly, colorful background, detailed lighting.`;
     ],
     parameters: {
       sampleCount: 1,
-      aspectRatio: "1:1",
-      safetyFilterLevel: "block_some",
-      personGeneration: "allow_adult"
     }
   };
 
