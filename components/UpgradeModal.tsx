@@ -29,7 +29,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
   if (!isOpen) return null;
 
   const tierPrices = {
-    basic: '5.00',
+    basic: '0.10',
     super: '30.00'
   };
 
@@ -169,7 +169,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                 </div>
                 <div className="text-right">
                   <div className="text-2xl font-black text-blue-900">
-                    $5
+                    $0.10
                   </div>
                   <span className="text-xs text-blue-600">תשלום חד-פעמי</span>
                 </div>
