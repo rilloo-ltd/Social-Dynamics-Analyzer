@@ -155,9 +155,9 @@ export default function LoginPage() {
         {/* Footer */}
         <p className="text-center mt-6 text-white/70 text-sm" dir="rtl">
           בהתחברות, אתה מסכים{' '}
-          <a href="#" className="underline hover:text-white transition-colors">לתנאי השימוש</a>
+          <button onClick={() => router.push('/terms')} className="underline hover:text-white transition-colors cursor-pointer">לתנאי השימוש</button>
           {' '}ו
-          <a href="#" className="underline hover:text-white transition-colors">למדיניות הפרטיות</a>
+          <button onClick={() => router.push('/privacy')} className="underline hover:text-white transition-colors cursor-pointer">למדיניות הפרטיות</button>
         </p>
       </div>
 
