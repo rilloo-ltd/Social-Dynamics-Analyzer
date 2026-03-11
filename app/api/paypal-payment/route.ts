@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
     // Expected amounts
     const expectedAmounts = {
-      basic: 0.10,
+      basic: 5.00,
       super: 30
     };
 

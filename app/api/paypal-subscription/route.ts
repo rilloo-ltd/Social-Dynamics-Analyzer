@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
       type: 'subscription_activated',
       subscriptionId,
       tier,
-      amount: tier === 'basic' ? 0.10 : 30.00,
+      amount: tier === 'basic' ? 5.00 : 30.00,
       currency: 'USD',
       timestamp: new Date().toISOString()
     });

@@ -371,7 +371,7 @@ export default function ProfilePage() {
                   <button
                     onClick={handleCancelSubscription}
                     disabled={cancelLoading}
-                    className="px-6 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="px-6 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
                   >
                     {cancelLoading ? (
                       <>

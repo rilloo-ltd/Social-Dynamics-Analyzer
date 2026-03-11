@@ -24,11 +24,12 @@ export default function RegenerateConfirmModal({
         <div className="bg-gradient-to-r from-indigo-500 to-purple-600 p-6 relative">
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 text-white hover:bg-white/20 rounded-lg p-1 transition-colors"
+            className="absolute top-4 left-4 text-white hover:bg-white/20 rounded-lg p-1 transition-colors cursor-pointer"
+            title="סגור"
           >
             <X className="w-5 h-5" />
           </button>
-          <h2 className="text-2xl font-bold text-white text-right">
+          <h2 className="text-2xl font-bold text-white text-right pr-10">
             ניתוח קיים נמצא
           </h2>
         </div>
@@ -43,7 +44,7 @@ export default function RegenerateConfirmModal({
             {/* Use Existing Button */}
             <button
               onClick={onUseExisting}
-              className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
+              className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-[1.02] cursor-pointer"
             >
               השתמש בניתוח הקיים
             </button>
@@ -51,7 +52,7 @@ export default function RegenerateConfirmModal({
             {/* Generate New Button */}
             <button
               onClick={onGenerateNew}
-              className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
+              className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-[1.02] cursor-pointer"
             >
               צור ניתוח חדש
             </button>
@@ -59,7 +60,7 @@ export default function RegenerateConfirmModal({
             {/* Cancel Button */}
             <button
               onClick={onClose}
-              className="w-full bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-xl transition-all duration-200"
+              className="w-full bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-xl transition-all duration-200 cursor-pointer"
             >
               ביטול
             </button>
