@@ -85,10 +85,22 @@ export async function GET(req: NextRequest) {
       ...doc.data()
     }));
 
+    // Get today's upload count
+    const today = new Date().toISOString().split('T')[0];
+    const dailyStatsDoc = await db
+      .collection('users')
+      .doc(userId)
+      .collection('dailyStats')
+      .doc(today)
+      .get();
+    
+    const uploadsToday = dailyStatsDoc.exists ? (dailyStatsDoc.data()?.uploadCount || 0) : 0;
+
     return NextResponse.json({ 
       success: true,
       userData,
-      transactions
+      transactions,
+      uploadsToday
     });
   } catch (error) {
     console.error('Error fetching user data:', error);

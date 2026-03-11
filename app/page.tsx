@@ -15,7 +15,7 @@ import { HowToExport } from '@/components/HowToExport';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon } from '@/components/Icons';
-import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText } from 'lucide-react';
+import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp } from 'lucide-react';
 import { 
   LOGO_URL, 
   TIER_CONFIG, 
@@ -67,6 +67,7 @@ export default function HomePage() {
   const [cachedOutputs, setCachedOutputs] = useState<Record<string, any>>({});
   const [isNewSessionMode, setIsNewSessionMode] = useState<boolean>(false);
   const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: 2 });
@@ -88,6 +89,23 @@ export default function HomePage() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setAuthUser(user);
       setAuthChecking(false);
+      if (user) {
+        // Check admin status
+        user.getIdToken().then(token => {
+          fetch('/api/check-admin', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          .then(res => res.json())
+          .then(data => {
+            if (data.success) {
+              setIsAdmin(data.isAdmin);
+            }
+          })
+          .catch(err => console.error('Error checking admin:', err));
+        });
+      } else {
+        setIsAdmin(false);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -714,8 +732,30 @@ export default function HomePage() {
       <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 overflow-x-hidden relative">
         <AuthDetails />
 
+        {/* Top Header Bar for Profile/Admin - Only when logged in */}
+        {authUser && (
+          <div className="absolute top-0 left-0 right-0 z-50 px-4 py-4 flex justify-end items-center gap-2">
+            {isAdmin && (
+              <button
+                onClick={() => router.push('/admin')}
+                className="p-2.5 bg-yellow-500/90 backdrop-blur-sm hover:bg-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
+                title="Admin Panel"
+              >
+                <Lock className="w-5 h-5" />
+              </button>
+            )}
+            <button
+              onClick={() => router.push('/profile')}
+              className="flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-sm hover:bg-white text-slate-800 rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg border border-slate-200/50"
+            >
+              <User className="w-4 h-4" />
+              <span className="font-bold text-sm">הפרופיל שלי</span>
+            </button>
+          </div>
+        )}
+
         {/* Hero Section */}
-        <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-16 text-center text-slate-800">
+        <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-20 text-center text-slate-800">
            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03]"></div>
            <div className="absolute -bottom-1 left-0 right-0 h-24 bg-gradient-to-t from-slate-50 to-transparent"></div>
            
@@ -767,6 +807,118 @@ export default function HomePage() {
                     </div>
                     <h3 className="text-xl font-bold text-slate-800 mb-3">פרופיל פסיכולוגי</h3>
                     <p className="text-slate-600 leading-relaxed">קבלו ניתוח אישיות מעמיק ומדויק להפליא, המבוסס על דפוסי הכתיבה וההתנהגות שלכם.</p>
+                </div>
+            </div>
+        </div>
+
+        {/* Pricing Section */}
+        <div className="bg-gradient-to-br from-slate-50 to-indigo-50 py-20 border-t border-slate-100">
+            <div className="max-w-5xl mx-auto px-4">
+                <div className="text-center mb-16">
+                    <h2 className="text-4xl md:text-5xl font-black text-slate-900 mb-4">תוכניות מנוי</h2>
+                    <p className="text-xl text-slate-600">בחר את התוכנית המתאימה לך</p>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8" dir="rtl">
+                    {/* Free Tier */}
+                    <div className="bg-white rounded-3xl p-8 shadow-lg hover:shadow-xl transition-all">
+                        <div className="text-center mb-6">
+                            <div className="inline-flex items-center justify-center w-16 h-16 bg-slate-100 rounded-2xl mb-4">
+                                <AlertCircle className="w-8 h-8 text-slate-600" />
+                            </div>
+                            <h3 className="text-2xl font-black text-slate-800 mb-2">חינם</h3>
+                            <div className="text-4xl font-black text-slate-900 mb-2">$0</div>
+                            <p className="text-sm text-slate-500">לתמיד</p>
+                        </div>
+                        <ul className="space-y-3 mb-8">
+                            <li className="flex items-center gap-2 text-slate-700">
+                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                                <span>2 ניתוחים ביום</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-slate-700">
+                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                                <span>ניתוחים בסיסיים</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-slate-400">
+                                <XCircle className="w-5 h-5 flex-shrink-0" />
+                                <span>ניתוחים מתקדמים</span>
+                            </li>
+                        </ul>
+                        <button className="w-full py-3 rounded-xl bg-slate-200 text-slate-600 font-bold cursor-not-allowed">
+                            התוכנית הנוכחית
+                        </button>
+                    </div>
+
+                    {/* Basic Tier */}
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-3xl p-8 shadow-lg hover:shadow-xl transition-all border-2 border-blue-200">
+                        <div className="text-center mb-6">
+                            <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-500 rounded-2xl mb-4">
+                                <TrendingUp className="w-8 h-8 text-white" />
+                            </div>
+                            <h3 className="text-2xl font-black text-blue-900 mb-2">מנוי בסיסי</h3>
+                            <div className="text-4xl font-black text-blue-900 mb-2">$5</div>
+                            <p className="text-sm text-blue-700">לחודש</p>
+                        </div>
+                        <ul className="space-y-3 mb-8">
+                            <li className="flex items-center gap-2 text-blue-900">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span className="font-bold">10 ניתוחים ביום</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-blue-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>ניתוחים בסיסיים</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-blue-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>תמיכה סטנדרטית</span>
+                            </li>
+                        </ul>
+                        <button 
+                            onClick={() => authUser ? router.push('/profile') : router.push('/signup')}
+                            className="w-full py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all cursor-pointer"
+                        >
+                            התחל עכשיו
+                        </button>
+                    </div>
+
+                    {/* Super Tier */}
+                    <div className="bg-gradient-to-br from-purple-50 to-pink-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all border-2 border-purple-300 relative">
+                        <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-sm font-bold px-4 py-1.5 rounded-full shadow-lg">
+                            הכי פופולרי ⭐
+                        </div>
+                        <div className="text-center mb-6 mt-2">
+                            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl mb-4">
+                                <Crown className="w-8 h-8 text-white" />
+                            </div>
+                            <h3 className="text-2xl font-black text-purple-900 mb-2">מנוי-על</h3>
+                            <div className="text-4xl font-black text-purple-900 mb-2">$30</div>
+                            <p className="text-sm text-purple-700">לחודש</p>
+                        </div>
+                        <ul className="space-y-3 mb-8">
+                            <li className="flex items-center gap-2 text-purple-900">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span className="font-bold">50 ניתוחים ביום</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-purple-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>ניתוחים מתקדמים</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-purple-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>תמיכה עדיפות</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-purple-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>גישה מוקדמת לפיצ'רים</span>
+                            </li>
+                        </ul>
+                        <button 
+                            onClick={() => authUser ? router.push('/profile') : router.push('/signup')}
+                            className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold hover:from-purple-700 hover:to-pink-700 transition-all cursor-pointer shadow-lg"
+                        >
+                            התחל עכשיו
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -876,7 +1028,27 @@ export default function HomePage() {
            <img src={LOGO_URL} className="w-10 h-10 rounded-full" />
            <h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1>
          </div>
-         <div className="flex items-center gap-4">
+         <div className="flex items-center gap-3">
+            {authUser && (
+              <>
+                {isAdmin && (
+                  <button
+                    onClick={() => router.push('/admin')}
+                    className="p-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all cursor-pointer"
+                    title="Admin Panel"
+                  >
+                    <Lock className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => router.push('/profile')}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all cursor-pointer"
+                >
+                  <User className="w-4 h-4" />
+                  <span className="hidden md:inline">פרופיל</span>
+                </button>
+              </>
+            )}
             <button onClick={() => setChatData(null)} className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer">החלף צ'אט</button>
          </div>
       </div>

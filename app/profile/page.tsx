@@ -14,8 +14,13 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  LogOut
+  LogOut,
+  Zap,
+  Crown,
+  Lock
 } from 'lucide-react';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 
 interface UserData {
   tier: 'free' | 'basic' | 'super';
@@ -25,6 +30,7 @@ interface UserData {
   subscriptionPlanId?: string;
   nextBillingDate?: string;
   subscriptionStartDate?: string;
+  uploadsToday?: number;
 }
 
 interface Transaction {
@@ -43,6 +49,8 @@ export default function ProfilePage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -77,8 +85,22 @@ export default function ProfilePage() {
       const data = await response.json();
       
       if (data.success) {
-        setUserData(data.userData);
+        setUserData({
+          ...data.userData,
+          uploadsToday: data.uploadsToday || 0
+        });
         setTransactions(data.transactions || []);
+      }
+
+      // Check admin status
+      const adminResponse = await fetch('/api/check-admin', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const adminData = await adminResponse.json();
+      if (adminData.success) {
+        setIsAdmin(adminData.isAdmin);
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
@@ -214,12 +236,24 @@ export default function ProfilePage() {
       <div className="relative z-10 max-w-4xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
-          <img 
-            src={LOGO_URL} 
-            alt="Logo" 
-            className="h-12 cursor-pointer hover:scale-105 transition-transform"
-            onClick={() => router.push('/')}
-          />
+          <div className="flex items-center gap-3">
+            <img 
+              src={LOGO_URL} 
+              alt="Logo" 
+              className="h-12 w-12 rounded-full cursor-pointer hover:scale-105 transition-transform"
+              onClick={() => router.push('/')}
+            />
+            {isAdmin && (
+              <button
+                onClick={() => router.push('/admin')}
+                className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-bold rounded-lg transition-all cursor-pointer shadow-md"
+                title="Admin Panel"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Admin</span>
+              </button>
+            )}
+          </div>
           <button
             onClick={handleLogout}
             className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl transition-all cursor-pointer"
@@ -241,10 +275,18 @@ export default function ProfilePage() {
               <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
                 {user?.email?.charAt(0).toUpperCase()}
               </div>
-              <div className="text-right">
+              <div className="text-right flex-1">
                 <div className="text-lg font-bold text-slate-800">{user?.email}</div>
                 <div className="text-sm text-slate-600">משתמש רשום</div>
               </div>
+              {isAdmin && (
+                <div className="bg-gradient-to-r from-yellow-400 to-orange-400 px-4 py-2 rounded-xl shadow-md">
+                  <div className="flex items-center gap-2 text-white">
+                    <Crown className="w-5 h-5" />
+                    <span className="font-bold text-sm">Admin</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -266,6 +308,25 @@ export default function ProfilePage() {
               )}
             </div>
 
+            {/* Daily Usage Tracker */}
+            <div className="mt-4 bg-white/20 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-bold">שימוש יומי</span>
+                <span className="text-sm font-bold">{userData?.uploadsToday || 0} / {userData?.maxDailyUploads}</span>
+              </div>
+              <div className="w-full bg-white/20 rounded-full h-3 overflow-hidden">
+                <div 
+                  className="bg-white h-full rounded-full transition-all duration-500"
+                  style={{ 
+                    width: `${Math.min(100, ((userData?.uploadsToday || 0) / (userData?.maxDailyUploads || 1)) * 100)}%` 
+                  }}
+                ></div>
+              </div>
+              <div className="mt-2 text-xs opacity-80">
+                נותרו {Math.max(0, (userData?.maxDailyUploads || 0) - (userData?.uploadsToday || 0))} ניתוחים היום
+              </div>
+            </div>
+
             {userData?.nextBillingDate && userData.subscriptionStatus === 'ACTIVE' && (
               <div className="flex items-center gap-2 text-sm opacity-90">
                 <Calendar className="w-4 h-4" />
@@ -273,6 +334,30 @@ export default function ProfilePage() {
               </div>
             )}
           </div>
+
+          {/* Upgrade Plan Section */}
+          {(!userData?.subscriptionId || userData.subscriptionStatus !== 'ACTIVE') && (
+            <div className="mb-8 p-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl" dir="rtl">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-indigo-900 mb-2 flex items-center gap-2">
+                    <Crown className="w-5 h-5" />
+                    שדרג את המנוי שלך
+                  </h3>
+                  <p className="text-sm text-indigo-700 mb-4">
+                    קבל גישה לניתוחים נוספים, פיצ'רים מתקדמים ותמיכה עדיפות
+                  </p>
+                  <button
+                    onClick={() => setShowUpgradeModal(true)}
+                    className="px-6 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all shadow-md cursor-pointer flex items-center gap-2"
+                  >
+                    <Zap className="w-4 h-4" />
+                    <span>צפה בתוכניות</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Subscription Actions */}
           {userData?.subscriptionId && userData.subscriptionStatus === 'ACTIVE' && (
@@ -352,6 +437,20 @@ export default function ProfilePage() {
           </button>
         </div>
       </div>
+
+      {/* Upgrade Modal */}
+      <PayPalScriptProvider options={{ clientId: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '', vault: true, intent: 'subscription' }}>
+        <UpgradeModal 
+          isOpen={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          onUpgrade={(tier) => {
+            fetchUserData(user?.uid || '');
+          }}
+          currentCount={userData?.uploadsToday || 0}
+          maxUploads={userData?.maxDailyUploads || 2}
+          userId={user?.uid}
+        />
+      </PayPalScriptProvider>
     </div>
   );
 }
