@@ -300,17 +300,30 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
   console.log('[Vertex AI Imagen] Project ID:', projectId);
   console.log('[Vertex AI Imagen] Location:', location);
 
-  const fullPrompt = `Disney Pixar style 3D animation. ${prompt}. 
-High quality, vibrant colors, expressive characters, professional animation style, 
-cute and friendly, colorful background, detailed lighting.`;
+  const fullPrompt = `3D animated cartoon style with expressive characters. ${prompt}. 
+High quality, vibrant colors, cute and friendly character design, colorful background, 
+cinematic lighting, professional 3D rendering, joyful atmosphere.`;
+
+  // Configure credentials for local vs production
+  let clientOptions: any = {
+    apiEndpoint: `${location}-aiplatform.googleapis.com`,
+  };
+
+  // In local development, use service account key
+  try {
+    const serviceAccountKey = require('../firebase-admin-key.json');
+    clientOptions.credentials = serviceAccountKey;
+    console.log('[Vertex AI Imagen] ✓ Using local service account credentials');
+  } catch (error) {
+    // In production (Firebase App Hosting), use Application Default Credentials
+    console.log('[Vertex AI Imagen] ✓ Using Application Default Credentials (production)');
+  }
 
   // Initialize the Prediction Service Client
-  const predictionServiceClient = new PredictionServiceClient({
-    apiEndpoint: `${location}-aiplatform.googleapis.com`,
-  });
+  const predictionServiceClient = new PredictionServiceClient(clientOptions);
 
-  // Construct the resource name for the model
-  const endpoint = `projects/${projectId}/locations/${location}/publishers/google/models/imagegeneration@006`;
+  // Construct the resource name for the model - using Imagen 4 (latest)
+  const endpoint = `projects/${projectId}/locations/${location}/publishers/google/models/imagen-4.0-generate-001`;
 
   console.log('[Vertex AI Imagen] Using SDK endpoint:', endpoint);
 
@@ -350,19 +363,44 @@ cute and friendly, colorful background, detailed lighting.`;
     const predictionStruct = prediction?.structValue?.fields || {};
     
     console.log('[Vertex AI Imagen] Prediction keys:', Object.keys(predictionStruct));
+    
+    // Log the full structure for debugging
+    for (const [key, value] of Object.entries(predictionStruct)) {
+      console.log(`[Vertex AI Imagen] Field "${key}":`, {
+        hasStringValue: !!value.stringValue,
+        hasBytesValue: !!value.bytesValue,
+        hasListValue: !!value.listValue,
+        hasStructValue: !!value.structValue,
+        stringValueLength: value.stringValue?.length || 0
+      });
+    }
 
-    // Check for image data in various formats
+    // Check for RAI (Responsible AI) filtering first
+    const raiReason = predictionStruct['raiFilteredReason']?.stringValue;
+    if (raiReason) {
+      console.error('[Vertex AI Imagen] ✗ Image blocked by content filters:', raiReason);
+      throw new Error('התמונה נחסמה על ידי מסנני התוכן של Google. נסה לנסח מחדש את הבקשה.');
+    }
+
+    // Check for image data in various formats (Imagen 4 typically uses bytesBase64Encoded)
     const bytesField = predictionStruct['bytesBase64Encoded']?.stringValue;
     const imageField = predictionStruct['image']?.stringValue;
+    const bytesValueField = predictionStruct['bytesBase64Encoded']?.bytesValue;
     
     if (bytesField) {
-      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded');
+      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded (stringValue)');
       return `data:image/png;base64,${bytesField}`;
     } else if (imageField) {
       console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via image field');
       return `data:image/png;base64,${imageField}`;
+    } else if (bytesValueField) {
+      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded (bytesValue)');
+      // Convert bytes to base64
+      const base64 = Buffer.from(bytesValueField).toString('base64');
+      return `data:image/png;base64,${base64}`;
     } else {
       console.error('[Vertex AI Imagen] ✗ Unexpected response format. Available fields:', Object.keys(predictionStruct));
+      console.error('[Vertex AI Imagen] ✗ Full prediction struct:', JSON.stringify(predictionStruct, null, 2).substring(0, 1000));
       throw new Error('Unable to extract image from Vertex AI response');
     }
   } catch (error: any) {
@@ -390,7 +428,7 @@ create a visually appealing summary for a social media card.
 
 1. A short, catchy headline (max 5 words) in Hebrew.
 2. Exactly 3 short, impactful bullet points in Hebrew summarizing the key insights. Keep participant names as they appear.
-3. A detailed visual prompt for an image generator in English. The style should be "Disney Pixar cartoon style" featuring friendly, expressive animals that represent the "vibe" of the analysis.
+3. A detailed visual prompt for an image generator in English. The style should be "3D animated cartoon style" featuring friendly, expressive animals that represent the "vibe" of the analysis. Avoid mentioning copyrighted brands or franchises.
 
 Analysis:
 ${analysisText}
@@ -427,13 +465,13 @@ ${analysisText}
     data = {
       headline: "הניתוח הפסיכולוגי שלך",
       points: ["ניתוח מפורט זמין בקרוב"],
-      visualPrompt: "A friendly cartoon character in a bright, cheerful setting, Pixar style"
+      visualPrompt: "A friendly cartoon character in a bright, cheerful setting, 3D animated style"
     };
   }
   
   return {
     headline: data.headline || "הניתוח הפסיכולוגי שלך",
     points: data.points || [],
-    visualPrompt: data.visualPrompt || "A friendly animal in a bright setting, Pixar style"
+    visualPrompt: data.visualPrompt || "A friendly animal in a bright setting, 3D animated cartoon style"
   };
 }
