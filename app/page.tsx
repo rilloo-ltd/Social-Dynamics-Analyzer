@@ -713,20 +713,6 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 overflow-x-hidden relative">
         <AuthDetails />
-        <button 
-          onClick={() => router.push('/admin')} 
-          className="absolute top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer"
-          title="Admin Login"
-        >
-          <Lock className="w-4 h-4" />
-        </button>
-        <button 
-          onClick={() => setIsNewSessionMode(!isNewSessionMode)} 
-          className={`absolute top-4 left-14 p-2 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer ${isNewSessionMode ? 'text-indigo-600 bg-indigo-50 rounded-full' : 'text-slate-400 hover:text-slate-600'}`}
-          title={isNewSessionMode ? "New Session Mode: ON" : "New Session Mode: OFF"}
-        >
-          <FileText className="w-4 h-4" />
-        </button>
 
         {/* Hero Section */}
         <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-16 text-center text-slate-800">
@@ -734,7 +720,11 @@ export default function HomePage() {
            <div className="absolute -bottom-1 left-0 right-0 h-24 bg-gradient-to-t from-slate-50 to-transparent"></div>
            
            <div className="max-w-5xl mx-auto px-4 relative z-10">
-              <div className="inline-flex items-center justify-center p-1 bg-white/60 backdrop-blur-md rounded-full mb-8 shadow-xl animate-bounce-slow ring-4 ring-teal-100/50">
+              <div 
+                onClick={() => authUser && router.push('/profile')}
+                className={`inline-flex items-center justify-center p-1 bg-white/60 backdrop-blur-md rounded-full mb-8 shadow-xl animate-bounce-slow ring-4 ring-teal-100/50 ${authUser ? 'cursor-pointer hover:ring-indigo-200 hover:scale-105 transition-all' : ''}`}
+                title={authUser ? 'הפרופיל שלי' : ''}
+              >
                  <img src={LOGO_URL} className="w-24 h-24 rounded-full border-4 border-white shadow-sm" />
               </div>
               <h1 className="text-6xl md:text-8xl font-black mb-6 tracking-tight text-teal-900 drop-shadow-sm animate-fadeIn">הדודה</h1>
@@ -777,37 +767,6 @@ export default function HomePage() {
                     </div>
                     <h3 className="text-xl font-bold text-slate-800 mb-3">פרופיל פסיכולוגי</h3>
                     <p className="text-slate-600 leading-relaxed">קבלו ניתוח אישיות מעמיק ומדויק להפליא, המבוסס על דפוסי הכתיבה וההתנהגות שלכם.</p>
-                </div>
-            </div>
-        </div>
-
-        {/* User Tiers */}
-        <div className="bg-slate-50 py-16 border-t border-slate-200">
-            <div className="max-w-4xl mx-auto px-4 text-center">
-                <h2 className="text-3xl font-black text-slate-800 mb-10">בחרו את רמת הניתוח המתאימה לכם</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {(Object.entries(TIER_CONFIG) as [UserTier, typeof TIER_CONFIG[UserTier]][]).map(([key, config]) => (
-                    <button
-                      key={key}
-                      onClick={() => setSelectedTier(key)}
-                      className={`relative p-6 rounded-2xl border-2 transition-all duration-300 flex flex-col items-center gap-4 group cursor-pointer ${
-                        selectedTier === key 
-                          ? `${config.color.split(' ')[0]} ${config.color.split(' ')[1]} ring-4 ring-offset-2 ring-teal-100 scale-105 shadow-xl border-teal-200` 
-                          : 'bg-white border-slate-100 hover:border-teal-200 hover:bg-teal-50/30 hover:shadow-lg'
-                      }`}
-                    >
-                      <div className={`p-4 rounded-full transition-colors ${selectedTier === key ? 'bg-white shadow-sm' : 'bg-slate-50 group-hover:bg-white'}`}>
-                        {config.icon}
-                      </div>
-                      <div className="text-center">
-                        <div className={`text-lg font-bold mb-2 ${selectedTier === key ? config.color.split(' ')[2] : 'text-slate-800'}`}>{config.label}</div>
-                        <div className="text-sm text-slate-500 leading-snug">{config.description}</div>
-                      </div>
-                      {selectedTier === key && (
-                          <div className="absolute -top-3 bg-teal-600 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-md">נבחר</div>
-                      )}
-                    </button>
-                  ))}
                 </div>
             </div>
         </div>
@@ -855,10 +814,30 @@ export default function HomePage() {
         </div>
 
         {/* Footer */}
-        <div className="bg-slate-900 text-slate-400 py-12 text-center text-sm">
-            <p>© 2026 הדודה. כל הזכויות שמורות.</p>
-            <p className="mt-2 opacity-60">הניתוח מתבצע באמצעות בינה מלאכותית ונועד למטרות בידור והעשרה בלבד.</p>
-        </div>
+        <footer className="bg-white border-t border-slate-200 py-8">
+          <div className="max-w-7xl mx-auto px-4">
+            <div className="flex flex-col md:flex-row items-center justify-center gap-4 mb-4">
+              <span className="text-slate-400 text-sm">© 2026 הדודה</span>
+              <span className="hidden md:inline text-slate-300">•</span>
+              <button 
+                onClick={() => router.push('/terms')}
+                className="text-sm text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+              >
+                תנאי שימוש
+              </button>
+              <span className="text-slate-300">•</span>
+              <button 
+                onClick={() => router.push('/privacy')}
+                className="text-sm text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+              >
+                מדיניות פרטיות
+              </button>
+            </div>
+            <p className="text-center text-xs text-slate-400 opacity-60">
+              הניתוח מתבצע באמצעות בינה מלאכותית ונועד למטרות בידור והעשרה בלבד.
+            </p>
+          </div>
+        </footer>
 
         <style>{`
           @keyframes bounce-slow { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
@@ -889,9 +868,15 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
       <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
-         <div className="flex items-center gap-3"><img src={LOGO_URL} className="w-10 h-10 rounded-full" /><h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1></div>
+         <div 
+           onClick={() => authUser && router.push('/profile')}
+           className={`flex items-center gap-3 ${authUser ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+           title={authUser ? 'הפרופיל שלי' : ''}
+         >
+           <img src={LOGO_URL} className="w-10 h-10 rounded-full" />
+           <h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1>
+         </div>
          <div className="flex items-center gap-4">
-            <button onClick={() => router.push('/admin')} className="text-slate-400 hover:text-slate-600 transition-colors cursor-pointer" title="Admin Login"><Lock className="w-4 h-4" /></button>
             <button onClick={() => setChatData(null)} className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer">החלף צ'אט</button>
          </div>
       </div>
@@ -1017,6 +1002,29 @@ export default function HomePage() {
         onUseExisting={handleUseExistingAnalysis}
         onGenerateNew={handleGenerateNewAnalysis}
       />
+
+      {/* Footer */}
+      <footer className="bg-white border-t border-slate-200 mt-20">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <div className="flex flex-col md:flex-row items-center justify-center gap-4 text-sm text-slate-500">
+            <span className="text-slate-400">© 2026 הדודה</span>
+            <span className="hidden md:inline text-slate-300">•</span>
+            <button 
+              onClick={() => router.push('/terms')}
+              className="hover:text-indigo-600 transition-colors cursor-pointer"
+            >
+              תנאי שימוש
+            </button>
+            <span className="text-slate-300">•</span>
+            <button 
+              onClick={() => router.push('/privacy')}
+              className="hover:text-indigo-600 transition-colors cursor-pointer"
+            >
+              מדיניות פרטיות
+            </button>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

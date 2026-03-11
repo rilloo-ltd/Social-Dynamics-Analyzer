@@ -33,6 +33,11 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
     super: '30.00'
   };
 
+  const planIds = {
+    basic: 'P-6XK38641ND090901UNGYWNPY',
+    super: 'P-6HU82766JJ872002KNGYWLOQ'
+  };
+
   const handleReset = async () => {
     if (!userId) return;
 
@@ -61,36 +66,35 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
     }
   };
 
-  const handlePaymentSuccess = async (orderId: string) => {
+  const handleSubscriptionSuccess = async (subscriptionId: string) => {
     if (!selectedTier || !userId) return;
 
     setIsProcessing(true);
 
     try {
-      const response = await fetch('/api/paypal-payment', {
+      const response = await fetch('/api/paypal-subscription', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: userId as string, // Type assertion: userId is guaranteed to be string here
-          orderId,
-          tier: selectedTier,
-          amount: parseFloat(tierPrices[selectedTier])
+          userId: userId as string,
+          subscriptionId,
+          tier: selectedTier
         })
       });
 
       const data = await response.json();
 
       if (data.success) {
-        alert(`🎉 תשלום התקבל בהצלחה! שודרגת למנוי ${selectedTier === 'basic' ? 'בסיסי' : 'על'}!`);
+        alert(`🎉 המנוי הופעל בהצלחה! שודרגת למנוי ${selectedTier === 'basic' ? 'בסיסי' : 'על'}!`);
         onUpgrade(selectedTier);
         onClose();
         router.refresh();
       } else {
-        alert('שגיאה באימות התשלום. אנא צור קשר עם התמיכה.');
+        alert('שגיאה באימות המנוי. אנא צור קשר עם התמיכה.');
       }
     } catch (error) {
-      console.error('Payment processing error:', error);
-      alert('שגיאה בעיבוד התשלום. אנא נסה שוב.');
+      console.error('Subscription processing error:', error);
+      alert('שגיאה בעיבוד המנוי. אנא נסה שוב.');
     } finally {
       setIsProcessing(false);
     }
@@ -171,37 +175,28 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                   <div className="text-2xl font-black text-blue-900">
                     $0.10
                   </div>
-                  <span className="text-xs text-blue-600">תשלום חד-פעמי</span>
+                  <span className="text-xs text-blue-600">לחודש</span>
                 </div>
               </div>
               
               {selectedTier === 'basic' && userId ? (
                 <div className="mt-3">
                   <PayPalButtons
-                    style={{ layout: 'horizontal', label: 'pay', tagline: false }}
+                    style={{ layout: 'horizontal', label: 'subscribe', tagline: false }}
                     disabled={isProcessing}
-                    createOrder={(data, actions) => {
-                      return actions.order.create({
-                        intent: 'CAPTURE',
-                        purchase_units: [{
-                          amount: {
-                            currency_code: 'USD',
-                            value: tierPrices.basic
-                          },
-                          description: 'מנוי בסיסי - 10 ניתוחים ביום'
-                        }]
+                    createSubscription={(data, actions) => {
+                      return actions.subscription.create({
+                        plan_id: planIds.basic
                       });
                     }}
-                    onApprove={async (data, actions) => {
-                      if (!actions.order) return;
-                      const details = await actions.order.capture();
-                      if (details.id) {
-                        await handlePaymentSuccess(details.id);
+                    onApprove={async (data) => {
+                      if (data.subscriptionID) {
+                        await handleSubscriptionSuccess(data.subscriptionID);
                       }
                     }}
                     onError={(err) => {
                       console.error('PayPal error:', err);
-                      alert('שגיאה בתשלום. אנא נסה שוב.');
+                      alert('שגיאה בהפעלת המנוי. אנא נסה שוב.');
                     }}
                   />
                 </div>
@@ -230,37 +225,28 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                   <div className="text-2xl font-black text-purple-900">
                     $30
                   </div>
-                  <span className="text-xs text-purple-600">תשלום חד-פעמי</span>
+                  <span className="text-xs text-purple-600">לחודש</span>
                 </div>
               </div>
               
               {selectedTier === 'super' && userId ? (
                 <div className="mt-3">
                   <PayPalButtons
-                    style={{ layout: 'horizontal', label: 'pay', tagline: false }}
+                    style={{ layout: 'horizontal', label: 'subscribe', tagline: false }}
                     disabled={isProcessing}
-                    createOrder={(data, actions) => {
-                      return actions.order.create({
-                        intent: 'CAPTURE',
-                        purchase_units: [{
-                          amount: {
-                            currency_code: 'USD',
-                            value: tierPrices.super
-                          },
-                          description: 'מנוי-על - 50 ניתוחים ביום'
-                        }]
+                    createSubscription={(data, actions) => {
+                      return actions.subscription.create({
+                        plan_id: planIds.super
                       });
                     }}
-                    onApprove={async (data, actions) => {
-                      if (!actions.order) return;
-                      const details = await actions.order.capture();
-                      if (details.id) {
-                        await handlePaymentSuccess(details.id);
+                    onApprove={async (data) => {
+                      if (data.subscriptionID) {
+                        await handleSubscriptionSuccess(data.subscriptionID);
                       }
                     }}
                     onError={(err) => {
                       console.error('PayPal error:', err);
-                      alert('שגיאה בתשלום. אנא נסה שוב.');
+                      alert('שגיאה בהפעלת המנוי. אנא נסה שוב.');
                     }}
                   />
                 </div>

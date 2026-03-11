@@ -29,7 +29,7 @@ async function isAdminUser(userId: string): Promise<boolean> {
 let adminInitialized = false;
 let adminDb: any = null;
 
-function getAdminDb() {
+export function getAdminDb() {
   if (adminInitialized) {
     return adminDb;
   }
