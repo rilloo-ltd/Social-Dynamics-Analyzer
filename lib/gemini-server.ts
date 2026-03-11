@@ -368,7 +368,6 @@ cinematic lighting, professional 3D rendering, joyful atmosphere.`;
     for (const [key, value] of Object.entries(predictionStruct)) {
       console.log(`[Vertex AI Imagen] Field "${key}":`, {
         hasStringValue: !!value.stringValue,
-        hasBytesValue: !!value.bytesValue,
         hasListValue: !!value.listValue,
         hasStructValue: !!value.structValue,
         stringValueLength: value.stringValue?.length || 0
@@ -382,22 +381,16 @@ cinematic lighting, professional 3D rendering, joyful atmosphere.`;
       throw new Error('התמונה נחסמה על ידי מסנני התוכן של Google. נסה לנסח מחדש את הבקשה.');
     }
 
-    // Check for image data in various formats (Imagen 4 typically uses bytesBase64Encoded)
+    // Check for image data - Imagen 4 uses bytesBase64Encoded as stringValue
     const bytesField = predictionStruct['bytesBase64Encoded']?.stringValue;
     const imageField = predictionStruct['image']?.stringValue;
-    const bytesValueField = predictionStruct['bytesBase64Encoded']?.bytesValue;
     
     if (bytesField) {
-      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded (stringValue)');
+      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded');
       return `data:image/png;base64,${bytesField}`;
     } else if (imageField) {
       console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via image field');
       return `data:image/png;base64,${imageField}`;
-    } else if (bytesValueField) {
-      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded (bytesValue)');
-      // Convert bytes to base64
-      const base64 = Buffer.from(bytesValueField).toString('base64');
-      return `data:image/png;base64,${base64}`;
     } else {
       console.error('[Vertex AI Imagen] ✗ Unexpected response format. Available fields:', Object.keys(predictionStruct));
       console.error('[Vertex AI Imagen] ✗ Full prediction struct:', JSON.stringify(predictionStruct, null, 2).substring(0, 1000));
