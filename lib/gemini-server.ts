@@ -139,7 +139,7 @@ ${chatContext}
 
   1. "personality": ניתוח אישיות. הסבירי למשתמש מי הוא/היא בצורה ישירה, כנה אך אדיבה. התמקדי בתכונות אופי, דפוסי התנהגות, חוזקות וחולשות. הפורמט: בדיוק 5 נקודות (בולט פוינטס) מפורטות.
   
-  2. "othersThoughts": מה המשתתפים האחרים חושבים. התמקדי ב-10 המשתתפים הדומיננטיים ביותר. נסחי השערה מלומדת לכל אחד מהם לגבי מה הוא חושב על "${targetUser}" על סמך רמזים וסאבטקסט. הפורמט: רשימת בולטים (שם המשתתף: הניתוח). כתבי רק את שמו הפרטי של כל משתתף, בלי לפרט על השם המלא. 
+  2. "othersThoughts": מה המשתתפים האחרים חושבים. התמקדי ב-10 המשתתפים הדומיננטיים ביותר. נסחי השערה מלומדת לכל אחד מהם לגבי מה הוא חושב על "${targetUser}" . אל תנתחי מה ${targetuser} חושב על עצמו. על סמך רמזים וסאבטקסט. הפורמט: רשימת בולטים (שם המשתתף: הניתוח). כתבי רק את שמו הפרטי של כל משתתף, בלי לפרט על השם המלא.
   
   3. "improvement": המלצות לשיפור התקשורת. המליצי על דרכים לשיפור הכימיה והיחסים. הביאי בדיוק 5 נקודות מעשיות, ולאחריהן 3 דוגמאות ספציפיות מהצ'אט שבהן המשתמש היה יכול לכתוב תגובה טובה יותר (הציגי את המקור והצעת שיפור).
   
@@ -152,12 +152,13 @@ ${chatContext}
   - לכל נקודה בכל אחד מהסעיפים, כתבי לפחות שני משפטים מלאים ומפורטים. אל תסתפקי במשפטים קצרים.
   - השתמשי בקודים של המשתתפים (P1, P2 וכו') בדיוק כפי שהם. אל תנסי לתרגם אותם או לנחש את השמות האמיתיים.
   - בהקדמה לכל אחד מהאובייקטים, עליך לציין את תאריך תחילת הניתוח, לפי התאריך המוקדם ביותר שבקובץ.
+  - אל תכללי בניתוח שלך דמויות שרק מוזכרות בשיח, אבל אינן משתתפות אקטיביות בשיחה בווטסאפ.
 
   
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: prompt
   });
   
@@ -235,7 +236,7 @@ ${chatContext}
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: prompt
   });
   
@@ -271,7 +272,7 @@ export async function serverAnalyzeRomanticDynamics(
   `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: prompt
   });
   
@@ -290,7 +291,7 @@ ${analysisText}
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: prompt
   });
   
@@ -437,7 +438,7 @@ ${analysisText}
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: prompt,
     config: {
       responseMimeType: 'application/json',

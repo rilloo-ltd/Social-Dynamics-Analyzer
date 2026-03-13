@@ -14,7 +14,7 @@ import { GroupParticipantSelector } from '@/components/GroupParticipantSelector'
 import { HowToExport } from '@/components/HowToExport';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
-import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon } from '@/components/Icons';
+import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon, LightbulbIcon } from '@/components/Icons';
 import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp } from 'lucide-react';
 import { 
   LOGO_URL, 
@@ -809,6 +809,21 @@ export default function HomePage() {
                     <p className="text-slate-600 leading-relaxed">קבלו ניתוח אישיות מעמיק ומדויק להפליא, המבוסס על דפוסי הכתיבה וההתנהגות שלכם.</p>
                 </div>
             </div>
+        </div>
+
+        {/* Highlighted Tip Section */}
+        <div className="max-w-4xl mx-auto px-4 pb-16 -mt-8" dir="rtl">
+          <div className="bg-gradient-to-r from-yellow-50 via-amber-50 to-orange-50 p-8 rounded-3xl shadow-lg border-2 border-amber-200/50 flex items-start gap-6">
+              <div className="w-16 h-16 bg-amber-400 text-white rounded-2xl flex-shrink-0 flex items-center justify-center">
+                  <LightbulbIcon className="w-8 h-8" />
+              </div>
+              <div>
+                  <h3 className="text-2xl font-black text-amber-900 mb-3">איזה צ'אט יספק את הניתוח הטוב ביותר?</h3>
+                  <p className="text-amber-800/90 leading-relaxed">
+                      כדי לקבל את התוצאות המעמיקות והמדויקות ביותר, מומלץ להעלות צ'אטים ארוכים יותר, בהם אנשים מרגישים בנוח לחשוף רגשות אמיתיים - כמו קבוצות משפחתיות או חברים קרובים. עם זאת, גם שיחות פרטיות בין שני אנשים יכולות לחשוף תובנות מדהימות. אל תהססו, פשוט נסו!
+                  </p>
+              </div>
+          </div>
         </div>
 
         {/* Pricing Section */}
