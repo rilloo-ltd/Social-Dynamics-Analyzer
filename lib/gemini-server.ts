@@ -6,6 +6,9 @@ import { ChatMessage } from "@/types";
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { PredictionServiceClient, helpers } from '@google-cloud/aiplatform';
 
+// Gemini model configuration - change here to update all analyses
+const GEMINI_MODEL = "gemini-3-flash-preview";
+
 const getSystemInstruction = () => `
 את פסיכולוגית חברתית מומחית בעלת ניסיון רב בניתוח דינמיקה קבוצתית, תקשורת בין-אישית ופסיכולוגיה התנהגותית. את גם הדודה המאד-נחמדה (אבל כנה וברורה וישירה) של האנשים בשיחה הזו.
 תפקידך לנתח היסטוריית צ'אט של קבוצת וואטסאפ.
@@ -139,7 +142,7 @@ ${chatContext}
 
   1. "personality": ניתוח אישיות. הסבירי למשתמש מי הוא/היא בצורה ישירה, כנה אך אדיבה. התמקדי בתכונות אופי, דפוסי התנהגות, חוזקות וחולשות. הפורמט: בדיוק 5 נקודות (בולט פוינטס) מפורטות.
   
-  2. "othersThoughts": מה המשתתפים האחרים חושבים. התמקדי ב-10 המשתתפים הדומיננטיים ביותר. נסחי השערה מלומדת לכל אחד מהם לגבי מה הוא חושב על "${targetUser}" . אל תנתחי מה ${targetuser} חושב על עצמו. על סמך רמזים וסאבטקסט. הפורמט: רשימת בולטים (שם המשתתף: הניתוח). כתבי רק את שמו הפרטי של כל משתתף, בלי לפרט על השם המלא.
+  2. "othersThoughts": מה המשתתפים האחרים חושבים. התמקדי ב-10 המשתתפים הדומיננטיים ביותר. נסחי השערה מלומדת לכל אחד מהם לגבי מה הוא חושב על "${targetUser}" . אל תנתחי מה ${targetUser} חושב על עצמו. על סמך רמזים וסאבטקסט. הפורמט: רשימת בולטים (שם המשתתף: הניתוח). כתבי רק את שמו הפרטי של כל משתתף, בלי לפרט על השם המלא.
   
   3. "improvement": המלצות לשיפור התקשורת. המליצי על דרכים לשיפור הכימיה והיחסים. הביאי בדיוק 5 נקודות מעשיות, ולאחריהן 3 דוגמאות ספציפיות מהצ'אט שבהן המשתמש היה יכול לכתוב תגובה טובה יותר (הציגי את המקור והצעת שיפור).
   
@@ -152,13 +155,12 @@ ${chatContext}
   - לכל נקודה בכל אחד מהסעיפים, כתבי לפחות שני משפטים מלאים ומפורטים. אל תסתפקי במשפטים קצרים.
   - השתמשי בקודים של המשתתפים (P1, P2 וכו') בדיוק כפי שהם. אל תנסי לתרגם אותם או לנחש את השמות האמיתיים.
   - בהקדמה לכל אחד מהאובייקטים, עליך לציין את תאריך תחילת הניתוח, לפי התאריך המוקדם ביותר שבקובץ.
-  - אל תכללי בניתוח שלך דמויות שרק מוזכרות בשיח, אבל אינן משתתפות אקטיביות בשיחה בווטסאפ.
 
   
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: GEMINI_MODEL,
     contents: prompt
   });
   
@@ -236,7 +238,7 @@ ${chatContext}
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: GEMINI_MODEL,
     contents: prompt
   });
   
@@ -272,7 +274,7 @@ export async function serverAnalyzeRomanticDynamics(
   `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: GEMINI_MODEL,
     contents: prompt
   });
   
@@ -291,7 +293,7 @@ ${analysisText}
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: GEMINI_MODEL,
     contents: prompt
   });
   
@@ -438,7 +440,7 @@ ${analysisText}
 `;
 
   const result = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: GEMINI_MODEL,
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
