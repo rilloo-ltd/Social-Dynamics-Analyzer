@@ -1,10 +1,16 @@
 'use server';
 
 import { getAllStats, clearAllChats, updateUserTier } from '@/lib/firestore-admin';
-import { UNLIMITED_PROMO_CODES } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Magav1!';
+
+// Promo codes for unlimited access (server-side only)
+const UNLIMITED_PROMO_CODES = [
+  'FRIENDS2026',
+  'UNLIMITED_ACCESS',
+  'VIP_PASS'
+];
 
 export async function verifyAdminPasswordAction(password: string) {
   if (password === ADMIN_PASSWORD) {

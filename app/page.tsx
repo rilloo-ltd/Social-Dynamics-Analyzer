@@ -89,6 +89,11 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    console.log('showPromoCodeModal changed:', showPromoCodeModal);
+    console.log('authUser:', authUser?.email);
+  }, [showPromoCodeModal, authUser]);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setAuthUser(user);
       setAuthChecking(false);
@@ -185,6 +190,14 @@ export default function HomePage() {
     } catch (e) { console.error("Log feedback failed", e); }
   };
 
+  const handleOpenPromoCodeModal = () => {
+    console.log('handleOpenPromoCodeModal called');
+    console.log('Current authUser:', authUser?.email);
+    console.log('Current showPromoCodeModal:', showPromoCodeModal);
+    setShowPromoCodeModal(true);
+    console.log('setShowPromoCodeModal(true) called');
+  };
+
   const handleUpgrade = async (tier: 'basic' | 'super') => {
     if (!authUser) return;
     
@@ -271,12 +284,8 @@ export default function HomePage() {
           const checkData = await checkResponse.json();
           
           if (!checkData.canUpload) {
-            console.log('Upload limit reached, showing upgrade modal', checkData);
-            setUploadLimitData({
-              currentCount: checkData.currentCount,
-              maxUploads: checkData.maxUploads
-            });
-            setShowUpgradeModal(true);
+            console.log('Upload limit reached', checkData);
+            alert('הגעת למגבלה היומית של העלאות. השתמש בקוד חברים (לחץ על כפתור המתנה 🎁) לקבלת גישה בלתי מוגבלת!');
             return;
           }
         }
@@ -787,26 +796,27 @@ export default function HomePage() {
 
         {/* Top Header Bar for Profile/Admin - Only when logged in */}
         {authUser && (
-          <div className="absolute top-0 left-0 right-0 z-50 px-4 py-4 flex justify-end items-center gap-2">
+          <div className="absolute top-0 left-0 right-0 z-50 px-4 py-2 sm:py-4 flex justify-end items-center gap-2">
             {isAdmin && (
               <button
                 onClick={() => router.push('/admin')}
-                className="p-2.5 bg-yellow-500/90 backdrop-blur-sm hover:bg-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
+                className="p-2 sm:p-2.5 bg-yellow-500/90 backdrop-blur-sm hover:bg-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
                 title="Admin Panel"
               >
-                <Lock className="w-5 h-5" />
+                <Lock className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
             )}
             <button
-              onClick={() => setShowPromoCodeModal(true)}
-              className="p-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 backdrop-blur-sm hover:from-amber-600 hover:to-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
+              onClick={handleOpenPromoCodeModal}
+              type="button"
+              className="p-2 sm:p-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 backdrop-blur-sm hover:from-amber-600 hover:to-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
               title="קוד חברים"
             >
-              <Gift className="w-5 h-5" />
+              <Gift className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
             <button
               onClick={() => router.push('/profile')}
-              className="flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-sm hover:bg-white text-slate-800 rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg border border-slate-200/50"
+              className="hidden sm:flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-sm hover:bg-white text-slate-800 rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg border border-slate-200/50"
             >
               <User className="w-4 h-4" />
               <span className="font-bold text-sm">הפרופיל שלי</span>
@@ -815,7 +825,7 @@ export default function HomePage() {
         )}
 
         {/* Hero Section */}
-        <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-20 text-center text-slate-800">
+        <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-24 sm:pt-20 text-center text-slate-800">
            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03]"></div>
            <div className="absolute -bottom-1 left-0 right-0 h-24 bg-gradient-to-t from-slate-50 to-transparent"></div>
            
@@ -1088,6 +1098,23 @@ export default function HomePage() {
           onUseExisting={handleUseExistingAnalysis}
           onGenerateNew={handleGenerateNewAnalysis}
         />
+
+        {authUser && (
+          <PromoCodeModal
+            isOpen={showPromoCodeModal}
+            onClose={() => {
+              console.log('Closing promo modal');
+              setShowPromoCodeModal(false);
+            }}
+            userId={authUser.uid}
+            onSuccess={() => {
+              console.log('Promo code redeemed successfully');
+              setShowPromoCodeModal(false);
+              // Refresh the page to update limits
+              router.refresh();
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -1253,9 +1280,14 @@ export default function HomePage() {
       {authUser && (
         <PromoCodeModal
           isOpen={showPromoCodeModal}
-          onClose={() => setShowPromoCodeModal(false)}
+          onClose={() => {
+            console.log('Closing promo modal');
+            setShowPromoCodeModal(false);
+          }}
           userId={authUser.uid}
           onSuccess={() => {
+            console.log('Promo code redeemed successfully');
+            setShowPromoCodeModal(false);
             // Refresh the page to update limits
             router.refresh();
           }}

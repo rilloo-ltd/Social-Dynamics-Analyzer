@@ -16,6 +16,8 @@ export default function PromoCodeModal({ isOpen, onClose, userId, onSuccess }: P
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
+  console.log('PromoCodeModal render - isOpen:', isOpen, 'userId:', userId);
+  
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -48,12 +50,12 @@ export default function PromoCodeModal({ isOpen, onClose, userId, onSuccess }: P
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4" style={{ position: 'fixed' }}>
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 relative animate-fadeIn">
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 left-4 text-gray-400 hover:text-gray-600 transition-colors"
+          className="absolute top-4 left-4 text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
           disabled={isLoading}
         >
           <X className="w-6 h-6" />
@@ -86,7 +88,6 @@ export default function PromoCodeModal({ isOpen, onClose, userId, onSuccess }: P
                 setPromoCode(e.target.value.toUpperCase());
                 setErrorMessage('');
               }}
-              placeholder="FRIENDS2026"
               className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg text-center text-lg font-mono font-bold tracking-wider uppercase focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none transition-all"
               disabled={isLoading}
               maxLength={20}
@@ -102,7 +103,7 @@ export default function PromoCodeModal({ isOpen, onClose, userId, onSuccess }: P
           <button
             type="submit"
             disabled={isLoading || !promoCode.trim()}
-            className="w-full py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white font-bold rounded-lg hover:from-amber-600 hover:to-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+            className="w-full py-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white font-bold rounded-lg hover:from-amber-600 hover:to-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
           >
             {isLoading ? (
               <>
