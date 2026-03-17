@@ -15,13 +15,34 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
   const processFile = async (file: File) => {
     setIsLoading(true);
     try {
-      // Check file size first
-      if (file.size > MAX_FILE_SIZE_BYTES) {
-        const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-        alert(`⚠️ הקובץ גדול מדי!\n\nהגודל שלו: ${sizeMB} מגה-בייט\nמקסימום מותר: ${MAX_FILE_SIZE_MB} מגה-בייט\n\n💡 טיפ: ייצא את הצ'אט מוואטסאפ עם תקופת זמן קצרה יותר (למשל, 3-6 חודשים אחרונים במקום כל ההיסטוריה).`);
-        setIsLoading(false);
-        return;
-      }
+      // Helper function to truncate text from start if too large
+      const truncateIfNeeded = (text: string): string => {
+        const textSizeBytes = new Blob([text]).size;
+        if (textSizeBytes <= MAX_FILE_SIZE_BYTES) {
+          return text;
+        }
+        
+        // Calculate how much to keep (keep from end, which has recent messages)
+        const lines = text.split('\n');
+        let keptText = '';
+        let currentSize = 0;
+        
+        // Start from the end and work backwards
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const lineWithNewline = lines[i] + '\n';
+          const lineSize = new Blob([lineWithNewline]).size;
+          
+          if (currentSize + lineSize > MAX_FILE_SIZE_BYTES) {
+            break; // Stop if adding this line would exceed limit
+          }
+          
+          keptText = lineWithNewline + keptText;
+          currentSize += lineSize;
+        }
+        
+        console.log(`[FileUpload] File truncated: ${(textSizeBytes / 1024 / 1024).toFixed(2)}MB -> ${(currentSize / 1024 / 1024).toFixed(2)}MB (kept recent messages)`);
+        return keptText;
+      };
 
       // Check for ZIP file
       if (
@@ -39,17 +60,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
 
         if (txtFile) {
           const content = await txtFile.async('string');
-          
-          // Check text content size after extraction
-          const textSizeBytes = new Blob([content]).size;
-          if (textSizeBytes > MAX_FILE_SIZE_BYTES) {
-            const sizeMB = (textSizeBytes / 1024 / 1024).toFixed(2);
-            alert(`⚠️ תוכן הקובץ גדול מדי!\n\nהגודל: ${sizeMB} מגה-בייט\nמקסימום מותר: ${MAX_FILE_SIZE_MB} מגה-בייט\n\n💡 טיפ: ייצא צ'אט עם תקופה קצרה יותר.`);
-            setIsLoading(false);
-            return;
-          }
-          
-          onFileLoaded(content);
+          const truncatedContent = truncateIfNeeded(content);
+          onFileLoaded(truncatedContent);
         } else {
           alert('❌ לא נמצא קובץ טקסט (txt) בתוך קובץ ה-ZIP.\n\nאנא ודא שהקובץ תקין ומכיל את קובץ הצ\'אט.');
         }
@@ -59,17 +71,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
         const reader = new FileReader();
         reader.onload = (event) => {
           const text = event.target?.result as string;
-          
-          // Double-check text size
-          const textSizeBytes = new Blob([text]).size;
-          if (textSizeBytes > MAX_FILE_SIZE_BYTES) {
-            const sizeMB = (textSizeBytes / 1024 / 1024).toFixed(2);
-            alert(`⚠️ הקובץ גדול מדי!\n\nהגודל: ${sizeMB} מגה-בייט\nמקסימום מותר: ${MAX_FILE_SIZE_MB} מגה-בייט\n\n💡 טיפ: ייצא צ'אט עם תקופה קצרה יותר.`);
-            setIsLoading(false);
-            return;
-          }
-          
-          onFileLoaded(text);
+          const truncatedText = truncateIfNeeded(text);
+          onFileLoaded(truncatedText);
         };
         reader.onerror = () => {
           alert('❌ אירעה שגיאה בקריאת הקובץ.\n\nנסה שוב או העלה קובץ אחר.');

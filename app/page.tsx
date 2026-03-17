@@ -111,6 +111,26 @@ export default function HomePage() {
     return () => unsubscribe();
   }, []);
 
+  // Handle browser back button to clear chat instead of logout
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      if (event.state?.hasChatData) {
+        // Do nothing, stay on chat view
+      } else if (chatData) {
+        // User pressed back while viewing chat - clear chat data
+        setChatData(null);
+        setSelectedUser(null);
+        setUserAnalysisData({});
+        setActiveAnalysisType(null);
+        setCachedOutputs({});
+        setChatCode(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [chatData]);
+
   const isAnalyzing = loading;
 
   const logUpload = async (participantsCount: number, anonymizedText: string, tokenCount: number, chatCode?: string | null) => {
@@ -359,6 +379,9 @@ export default function HomePage() {
       setSelectedUser(null);
       setUserAnalysisData({});
       setActiveAnalysisType(null);
+      
+      // Push history state so back button clears chat instead of logout
+      window.history.pushState({ hasChatData: true }, '', window.location.href);
     } catch (error: any) {
       logClientError('Error in handleFileLoaded', error, {
         userId: authUser?.uid,
