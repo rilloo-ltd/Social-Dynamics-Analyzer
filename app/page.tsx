@@ -25,6 +25,7 @@ import {
   LOADING_MESSAGES_PHASE_2,
   LOADING_MESSAGES_PHASE_3
 } from '@/lib/constants';
+import { logClientError, isServerActionNotFoundError, getClientErrorMessage } from '@/lib/client-logger';
 import AuthDetails from '@/components/AuthDetails';
 import { auth } from '@/lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
@@ -359,12 +360,14 @@ export default function HomePage() {
       setUserAnalysisData({});
       setActiveAnalysisType(null);
     } catch (error: any) {
-      console.error("Error in handleFileLoaded:", error);
-      if (error.message) {
-        alert(`שגיאה: ${error.message}`);
-      } else {
-        alert("אירעה שגיאה בעיבוד הקובץ. אנא נסה שוב או בחר קובץ קטן יותר.");
-      }
+      logClientError('Error in handleFileLoaded', error, {
+        userId: authUser?.uid,
+        page: 'main',
+        action: 'handleFileLoaded'
+      });
+      
+      const errorMessage = getClientErrorMessage(error);
+      alert(`שגיאה: ${errorMessage}`);
     } finally {
       setIsProcessingFile(false);
     }
@@ -436,7 +439,15 @@ export default function HomePage() {
             return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
         };
         setUserAnalysisData(prev => ({ ...prev, GROUP: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
-      } catch (e: any) { alert(e.message); setActiveAnalysisType(null); }
+      } catch (e: any) { 
+        logClientError('Group dynamics analysis failed', e, {
+          userId: authUser?.uid,
+          chatCode,
+          action: 'analyzeGroupDynamics'
+        });
+        alert(getClientErrorMessage(e)); 
+        setActiveAnalysisType(null); 
+      }
       finally { setLoading(false); }
       return;
     }
@@ -472,7 +483,15 @@ export default function HomePage() {
             return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
         };
         setUserAnalysisData(prev => ({ ...prev, ROMANTIC: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
-      } catch (e: any) { alert(e.message); setActiveAnalysisType(null); }
+      } catch (e: any) { 
+        logClientError('Romantic dynamics analysis failed', e, {
+          userId: authUser?.uid,
+          chatCode,
+          action: 'analyzeRomanticDynamics'
+        });
+        alert(getClientErrorMessage(e)); 
+        setActiveAnalysisType(null); 
+      }
       finally { setLoading(false); }
       return;
     }
@@ -531,7 +550,16 @@ export default function HomePage() {
       };
 
       setUserAnalysisData(prev => ({ ...prev, [selectedUser]: finalData }));
-    } catch (e: any) { alert(e.message); setActiveAnalysisType(null); }
+    } catch (e: any) { 
+      logClientError('Full chat analysis failed', e, {
+        userId: authUser?.uid,
+        selectedUser,
+        chatCode,
+        action: 'analyzeChatFull'
+      });
+      alert(getClientErrorMessage(e)); 
+      setActiveAnalysisType(null); 
+    }
     finally { setLoading(false); }
   };
 
