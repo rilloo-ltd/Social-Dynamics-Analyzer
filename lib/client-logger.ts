@@ -35,7 +35,9 @@ export function logClientError(
     logEntry.error = {
       name: error.name,
       message: error.message,
-      stack: error.stack
+      stack: error.stack,
+      // Capture Next.js error digest for finding server logs
+      digest: (error as any).digest
     };
   } else {
     logEntry.error = {
@@ -45,6 +47,12 @@ export function logClientError(
 
   // Log to console for development
   console.error('[CLIENT ERROR]', JSON.stringify(logEntry, null, 2));
+  
+  // Highlight digest for debugging production errors
+  if (logEntry.error?.digest) {
+    console.error(`🔍 ERROR DIGEST: ${logEntry.error.digest}`);
+    console.error(`Search in GCP Logs: "digest":"${logEntry.error.digest}"`);
+  }
   
   // In production, you could also send to an error tracking service here
   // e.g., Sentry, LogRocket, etc.

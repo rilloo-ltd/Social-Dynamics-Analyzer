@@ -16,66 +16,75 @@ import { logger } from '@/lib/logger';
 import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '@/lib/constants';
 
 export async function uploadChatAction(userId: string, text: string, forceNew?: boolean) {
-  if (!userId) {
-    logger.error('Upload chat action failed: Missing user ID', { userId });
-    throw new Error('User ID required');
-  }
-  
-  if (!text) {
-    logger.error('Upload chat action failed: No text provided', { userId });
-    throw new Error('No text provided');
-  }
+  try {
+    if (!userId) {
+      logger.error('Upload chat action failed: Missing user ID', { userId });
+      throw new Error('User ID required');
+    }
+    
+    if (!text) {
+      logger.error('Upload chat action failed: No text provided', { userId });
+      throw new Error('No text provided');
+    }
 
-  // Log payload size for debugging
-  const sizeInBytes = Buffer.byteLength(text, 'utf8');
-  const sizeInKB = (sizeInBytes / 1024).toFixed(2);
-  const sizeMB = (sizeInBytes / 1024 / 1024).toFixed(2);
-  
-  logger.info('Upload chat action started', {
-    userId,
-    fileSize: sizeInBytes,
-    fileSizeKB: parseFloat(sizeInKB),
-    fileSizeMB: parseFloat(sizeMB),
-    forceNew
-  });
-
-  if (sizeInBytes > MAX_FILE_SIZE_BYTES) {
-    logger.warning('File too large rejected', {
+    // Log payload size for debugging
+    const sizeInBytes = Buffer.byteLength(text, 'utf8');
+    const sizeInKB = (sizeInBytes / 1024).toFixed(2);
+    const sizeMB = (sizeInBytes / 1024 / 1024).toFixed(2);
+    
+    logger.info('Upload chat action started', {
       userId,
       fileSize: sizeInBytes,
       fileSizeKB: parseFloat(sizeInKB),
       fileSizeMB: parseFloat(sizeMB),
-      maxAllowedMB: MAX_FILE_SIZE_MB
+      forceNew
     });
-    throw new Error(`הקובץ גדול מדי (${sizeMB} MB). המקסימום המותר הוא ${MAX_FILE_SIZE_MB} MB.`);
-  }
 
-  const code = generateChatCode(text);
-  if (!code) {
-    logger.error('Failed to generate chat code', { userId });
-    throw new Error('Could not generate chat code (empty content)');
-  }
+    if (sizeInBytes > MAX_FILE_SIZE_BYTES) {
+      logger.warning('File too large rejected', {
+        userId,
+        fileSize: sizeInBytes,
+        fileSizeKB: parseFloat(sizeInKB),
+        fileSizeMB: parseFloat(sizeMB),
+        maxAllowedMB: MAX_FILE_SIZE_MB
+      });
+      throw new Error(`הקובץ גדול מדי (${sizeMB} MB). המקסימום המותר הוא ${MAX_FILE_SIZE_MB} MB.`);
+    }
 
-  // Check if chat already exists
-  const existingChat = await getChat(userId, code);
-  
-  if (existingChat && !forceNew) {
-    logger.info('Chat already exists, returning cached data', {
+    const code = generateChatCode(text);
+    if (!code) {
+      logger.error('Failed to generate chat code', { userId });
+      throw new Error('Could not generate chat code (empty content)');
+    }
+
+    // Check if chat already exists
+    const existingChat = await getChat(userId, code);
+    
+    if (existingChat && !forceNew) {
+      logger.info('Chat already exists, returning cached data', {
+        userId,
+        chatCode: code,
+        hasOutputs: !!existingChat.outputs
+      });
+      return { success: true, code, existingOutputs: existingChat.outputs || {} };
+    }
+
+    await storeChat(userId, code, text);
+
+    logger.info('Chat stored successfully', {
       userId,
       chatCode: code,
-      hasOutputs: !!existingChat.outputs
+      fileSize: sizeInBytes
     });
-    return { success: true, code, existingOutputs: existingChat.outputs || {} };
+    return { success: true, code, existingOutputs: {} };
+  } catch (error) {
+    logger.error('Upload chat action failed with unexpected error', {
+      userId,
+      textLength: text?.length || 0,
+      forceNew
+    }, error instanceof Error ? error : undefined);
+    throw error;
   }
-
-  await storeChat(userId, code, text);
-
-  logger.info('Chat stored successfully', {
-    userId,
-    chatCode: code,
-    fileSize: sizeInBytes
-  });
-  return { success: true, code, existingOutputs: {} };
 }
 
 export async function updateChatCacheAction(userId: string, code: string, type: string, output: any) {
