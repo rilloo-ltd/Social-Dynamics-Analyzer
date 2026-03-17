@@ -194,28 +194,41 @@ export async function checkDailyUploadLimit(userId: string, maxUploads: number =
     return { canUpload: true, currentCount: 0, remainingUploads: 999999 };
   }
 
+  // Check if user has unlimited access via promo code
+  const userTier = await getUserTier(userId);
+  const effectiveMaxUploads = userTier.maxDailyUploads;
+  
+  // Users with 999999 max uploads have unlimited access
+  if (effectiveMaxUploads >= 999999) {
+    return { canUpload: true, currentCount: 0, remainingUploads: 999999 };
+  }
+
   const db = getAdminDb();
   const today = new Date().toISOString().split('T')[0];
   
   const statsDoc = await db.collection('users').doc(userId).collection('dailyStats').doc(today).get();
   
   if (!statsDoc.exists) {
-    return { canUpload: true, currentCount: 0, remainingUploads: maxUploads };
+    return { canUpload: true, currentCount: 0, remainingUploads: effectiveMaxUploads };
   }
   
   const data = statsDoc.data();
   const currentCount = data?.uploadCount || 0;
   
   return {
-    canUpload: currentCount < maxUploads,
+    canUpload: currentCount < effectiveMaxUploads,
     currentCount,
-    remainingUploads: Math.max(0, maxUploads - currentCount)
+    remainingUploads: Math.max(0, effectiveMaxUploads - currentCount)
   };
 }
 
 export async function incrementDailyUpload(userId: string, maxUploads: number = 2) {
   // Admin users bypass limits but we still track their uploads
   const isAdmin = await isAdminUser(userId);
+  
+  // Check if user has unlimited access via promo code
+  const userTier = await getUserTier(userId);
+  const hasUnlimited = isAdmin || userTier.maxDailyUploads >= 999999;
 
   const db = getAdminDb();
   const today = new Date().toISOString().split('T')[0];
@@ -229,13 +242,13 @@ export async function incrementDailyUpload(userId: string, maxUploads: number = 
       uploadCount: 1,
       lastUpload: new Date().toISOString()
     });
-    return { success: true, currentCount: 1, remainingUploads: isAdmin ? 999999 : maxUploads - 1 };
+    return { success: true, currentCount: 1, remainingUploads: hasUnlimited ? 999999 : userTier.maxDailyUploads - 1 };
   }
   
   const currentCount = statsDoc.data()?.uploadCount || 0;
   
-  // Only enforce limit for non-admin users
-  if (!isAdmin && currentCount >= maxUploads) {
+  // Only enforce limit for users without unlimited access
+  if (!hasUnlimited && currentCount >= userTier.maxDailyUploads) {
     throw new Error('Daily upload limit reached');
   }
   
@@ -247,7 +260,7 @@ export async function incrementDailyUpload(userId: string, maxUploads: number = 
   return {
     success: true,
     currentCount: currentCount + 1,
-    remainingUploads: isAdmin ? 999999 : Math.max(0, maxUploads - currentCount - 1)
+    remainingUploads: hasUnlimited ? 999999 : Math.max(0, userTier.maxDailyUploads - currentCount - 1)
   };
 }
 

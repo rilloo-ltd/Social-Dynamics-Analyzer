@@ -13,6 +13,23 @@ export const PRIVACY_DISCLAIMER_TEXT = "[PRIVACY_NOTICE] השמות המקורי
 export const MAX_FILE_SIZE_MB = 10;
 export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
+// Promo codes for unlimited access
+export const UNLIMITED_PROMO_CODES = [
+  'FRIENDS2026',
+  'UNLIMITED_ACCESS',
+  'VIP_PASS'
+];
+
+// Unlimited tier configuration
+export const UNLIMITED_TIER = {
+  label: 'גישה בלתי מוגבלת 🎉',
+  description: 'ניתוחים ללא הגבלה - קוד חברים מיוחד',
+  limit: 999999999, // Essentially unlimited
+  maxDailyUploads: 999999,
+  icon: <Star className="w-5 h-5" />,
+  color: 'bg-gradient-to-r from-yellow-50 to-amber-100 border-yellow-300 text-yellow-900'
+};
+
 export const TIER_CONFIG: Record<UserTier, { label: string, description: string, limit: number, icon: React.ReactNode, color: string }> = {
   free: { 
     label: 'משתמש חופשי', 

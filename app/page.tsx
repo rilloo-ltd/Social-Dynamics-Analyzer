@@ -15,7 +15,7 @@ import { HowToExport } from '@/components/HowToExport';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon, LightbulbIcon } from '@/components/Icons';
-import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp } from 'lucide-react';
+import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp, Gift } from 'lucide-react';
 import { 
   LOGO_URL, 
   TIER_CONFIG, 
@@ -27,6 +27,7 @@ import {
 } from '@/lib/constants';
 import { logClientError, isServerActionNotFoundError, getClientErrorMessage } from '@/lib/client-logger';
 import AuthDetails from '@/components/AuthDetails';
+import PromoCodeModal from '@/components/PromoCodeModal';
 import { auth } from '@/lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { 
@@ -74,6 +75,7 @@ export default function HomePage() {
   const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: 2 });
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [pendingAnalysis, setPendingAnalysis] = useState<{type: AnalysisType, participants?: string[]} | null>(null);
+  const [showPromoCodeModal, setShowPromoCodeModal] = useState(false);
 
   useEffect(() => {
     fetch('/api/messages')
@@ -796,6 +798,13 @@ export default function HomePage() {
               </button>
             )}
             <button
+              onClick={() => setShowPromoCodeModal(true)}
+              className="p-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 backdrop-blur-sm hover:from-amber-600 hover:to-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
+              title="קוד חברים"
+            >
+              <Gift className="w-5 h-5" />
+            </button>
+            <button
               onClick={() => router.push('/profile')}
               className="flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-sm hover:bg-white text-slate-800 rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg border border-slate-200/50"
             >
@@ -1240,6 +1249,18 @@ export default function HomePage() {
         onUseExisting={handleUseExistingAnalysis}
         onGenerateNew={handleGenerateNewAnalysis}
       />
+
+      {authUser && (
+        <PromoCodeModal
+          isOpen={showPromoCodeModal}
+          onClose={() => setShowPromoCodeModal(false)}
+          userId={authUser.uid}
+          onSuccess={() => {
+            // Refresh the page to update limits
+            router.refresh();
+          }}
+        />
+      )}
 
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 mt-20">
