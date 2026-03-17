@@ -214,10 +214,10 @@ export default function HomePage() {
       }
     } catch (e: any) { 
       console.error("Store chat failed", e);
-      if (e.message && e.message.includes('too large')) {
-        alert(`הקובץ גדול מדי (${e.message}). נסה להעלות קובץ קטן יותר או בחר רמת משתמש נמוכה יותר.`);
+      if (e.message && (e.message.includes('גדול מדי') || e.message.includes('too large'))) {
+        alert(`⚠️ ${e.message}\n\n💡 טיפ: ייצא את הצ'אט מוואטסאפ עם תקופה קצרה יותר (למשל, 3-6 חודשים אחרונים).`);
       } else {
-        alert(`שגיאה בשמירת הצ'אט: ${e.message || 'שגיאה לא ידועה'}`);
+        alert(`❌ שגיאה בשמירת הצ'אט\n\n${e.message || 'שגיאה לא ידועה. נסה שוב.'}`);
       }
       throw e;
     }

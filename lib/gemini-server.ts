@@ -5,6 +5,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { ChatMessage } from "@/types";
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { PredictionServiceClient, helpers } from '@google-cloud/aiplatform';
+import { logger } from './logger';
 
 // Gemini model configuration - change here to update all analyses
 const GEMINI_MODEL = "gemini-3-flash-preview";
@@ -111,7 +112,9 @@ const getApiKey = async (): Promise<string> => {
     }
     throw new Error('Secret payload is empty');
   } catch (error) {
-    console.error('Failed to access secret from Secret Manager:', error);
+    logger.error('Failed to access GEMINI_API_KEY from Secret Manager', {
+      environment: process.env.NODE_ENV
+    }, error instanceof Error ? error : undefined);
     throw new Error('Could not fetch GEMINI_API_KEY from Secret Manager');
   }
 };
@@ -171,9 +174,12 @@ ${chatContext}
   try {
     parsed = JSON.parse(cleanedText);
   } catch (error) {
-    console.error('JSON Parse Error:', error);
-    console.error('Raw text:', rawText);
-    console.error('Cleaned text:', cleanedText);
+    logger.error('JSON parse error in serverAnalyzeChatFull', {
+      rawTextLength: rawText?.length || 0,
+      cleanedTextLength: cleanedText?.length || 0,
+      rawTextPreview: rawText?.substring(0, 200),
+      cleanedTextPreview: cleanedText?.substring(0, 200)
+    }, error instanceof Error ? error : undefined);
     
     // Fallback: return empty structure
     return {
@@ -301,16 +307,18 @@ ${analysisText}
 }
 
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
-  console.log('='.repeat(80));
-  console.log('[Vertex AI Imagen] FUNCTION CALLED - Starting image generation');
-  console.log('[Vertex AI Imagen] Prompt:', prompt.substring(0, 200) + '...');
-  console.log('='.repeat(80));
+  logger.info('Vertex AI Imagen: Starting image generation', {
+    promptLength: prompt.length,
+    promptPreview: prompt.substring(0, 200)
+  });
   
   const projectId = process.env.FIREBASE_PROJECT_ID || 'social-analyzer-24750033-dc53d';
   const location = 'us-central1';
   
-  console.log('[Vertex AI Imagen] Project ID:', projectId);
-  console.log('[Vertex AI Imagen] Location:', location);
+  logger.info('Vertex AI Imagen: Configuration', {
+    projectId,
+    location
+  });
 
   const fullPrompt = `3D animated cartoon style with expressive characters. ${prompt}. 
 High quality, vibrant colors, cute and friendly character design, colorful background, 
@@ -325,10 +333,10 @@ cinematic lighting, professional 3D rendering, joyful atmosphere.`;
   try {
     const serviceAccountKey = require('../firebase-admin-key.json');
     clientOptions.credentials = serviceAccountKey;
-    console.log('[Vertex AI Imagen] ✓ Using local service account credentials');
+    logger.info('Vertex AI Imagen: Using local service account credentials');
   } catch (error) {
     // In production (Firebase App Hosting), use Application Default Credentials
-    console.log('[Vertex AI Imagen] ✓ Using Application Default Credentials (production)');
+    logger.info('Vertex AI Imagen: Using Application Default Credentials (production)');
   }
 
   // Initialize the Prediction Service Client
@@ -337,7 +345,7 @@ cinematic lighting, professional 3D rendering, joyful atmosphere.`;
   // Construct the resource name for the model - using Imagen 4 (latest)
   const endpoint = `projects/${projectId}/locations/${location}/publishers/google/models/imagen-4.0-generate-001`;
 
-  console.log('[Vertex AI Imagen] Using SDK endpoint:', endpoint);
+  logger.info('Vertex AI Imagen: Prepared endpoint', { endpoint });
 
   const instanceValue = helpers.toValue({
     prompt: fullPrompt,
@@ -356,16 +364,20 @@ cinematic lighting, professional 3D rendering, joyful atmosphere.`;
     parameters,
   };
 
-  console.log('[Vertex AI Imagen] Sending prediction request...');
+  logger.info('Vertex AI Imagen: Sending prediction request');
 
   try {
     const [response] = await predictionServiceClient.predict(request);
     
-    console.log('[Vertex AI Imagen] ✓ Response received');
-    console.log('[Vertex AI Imagen] Predictions:', response.predictions?.length || 0);
+    logger.info('Vertex AI Imagen: Response received', {
+      predictionsCount: response.predictions?.length || 0
+    });
 
     if (!response.predictions || response.predictions.length === 0) {
-      console.error('[Vertex AI Imagen] ✗ No predictions in response');
+      logger.error('Vertex AI Imagen: No predictions in response', {
+        hasResponse: !!response,
+        responseKeys: response ? Object.keys(response) : []
+      });
       throw new Error('Vertex AI response contained no predictions');
     }
 
@@ -374,22 +386,23 @@ cinematic lighting, professional 3D rendering, joyful atmosphere.`;
     // Access the struct value directly to avoid protobuf type issues
     const predictionStruct = prediction?.structValue?.fields || {};
     
-    console.log('[Vertex AI Imagen] Prediction keys:', Object.keys(predictionStruct));
-    
-    // Log the full structure for debugging
-    for (const [key, value] of Object.entries(predictionStruct)) {
-      console.log(`[Vertex AI Imagen] Field "${key}":`, {
+    logger.info('Vertex AI Imagen: Processing prediction', {
+      predictionKeys: Object.keys(predictionStruct),
+      fieldDetails: Object.entries(predictionStruct).map(([key, value]) => ({
+        key,
         hasStringValue: !!value.stringValue,
         hasListValue: !!value.listValue,
         hasStructValue: !!value.structValue,
         stringValueLength: value.stringValue?.length || 0
-      });
-    }
+      }))
+    });
 
     // Check for RAI (Responsible AI) filtering first
     const raiReason = predictionStruct['raiFilteredReason']?.stringValue;
     if (raiReason) {
-      console.error('[Vertex AI Imagen] ✗ Image blocked by content filters:', raiReason);
+      logger.warning('Vertex AI Imagen: Image blocked by content filters', {
+        raiReason
+      });
       throw new Error('התמונה נחסמה על ידי מסנני התוכן של Google. נסה לנסח מחדש את הבקשה.');
     }
 
@@ -398,19 +411,26 @@ cinematic lighting, professional 3D rendering, joyful atmosphere.`;
     const imageField = predictionStruct['image']?.stringValue;
     
     if (bytesField) {
-      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via bytesBase64Encoded');
+      logger.info('Vertex AI Imagen: Image generated successfully via bytesBase64Encoded', {
+        imageSize: bytesField.length
+      });
       return `data:image/png;base64,${bytesField}`;
     } else if (imageField) {
-      console.log('[Vertex AI Imagen] ✓✓✓ Image generated successfully via image field');
+      logger.info('Vertex AI Imagen: Image generated successfully via image field', {
+        imageSize: imageField.length
+      });
       return `data:image/png;base64,${imageField}`;
     } else {
-      console.error('[Vertex AI Imagen] ✗ Unexpected response format. Available fields:', Object.keys(predictionStruct));
-      console.error('[Vertex AI Imagen] ✗ Full prediction struct:', JSON.stringify(predictionStruct, null, 2).substring(0, 1000));
+      logger.error('Vertex AI Imagen: Unexpected response format', {
+        availableFields: Object.keys(predictionStruct),
+        structPreview: JSON.stringify(predictionStruct, null, 2).substring(0, 500)
+      });
       throw new Error('Unable to extract image from Vertex AI response');
     }
   } catch (error: any) {
-    console.error('[Vertex AI Imagen] ✗ Error during prediction:', error.message);
-    console.error('[Vertex AI Imagen] ✗ Error details:', error);
+    logger.error('Vertex AI Imagen: Prediction error', {
+      errorMessage: error.message
+    }, error);
     throw new Error(`Image generation failed: ${error.message}`);
   }
 }

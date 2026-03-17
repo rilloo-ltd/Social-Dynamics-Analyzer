@@ -9,6 +9,10 @@ export const LOGO_URL = "https://madaduhcom.wpcomstaging.com/wp-content/uploads/
 
 export const PRIVACY_DISCLAIMER_TEXT = "[PRIVACY_NOTICE] השמות המקוריים שאתם רואים בניתוח זה הוחזרו למקומם על ידי המחשב שלכם בלבד. מנוע הבינה המלאכותית ראה אך ורק זהויות אנונימיות (כמו [Participant_1]) כדי להבטיח שהפרטיות שלכם נשמרת במלואה.\n\n";
 
+// File upload limits
+export const MAX_FILE_SIZE_MB = 10;
+export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+
 export const TIER_CONFIG: Record<UserTier, { label: string, description: string, limit: number, icon: React.ReactNode, color: string }> = {
   free: { 
     label: 'משתמש חופשי', 

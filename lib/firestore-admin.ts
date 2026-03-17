@@ -1,4 +1,5 @@
 import 'server-only';
+import { logger } from './logger';
 
 // Server-side Firestore operations using Firebase Admin SDK
 // This file is for API routes and server actions
@@ -21,7 +22,7 @@ async function isAdminUser(userId: string): Promise<boolean> {
     const userData = userDoc.data();
     return userData?.isAdmin === true;
   } catch (error) {
-    console.error('Error checking admin status:', error);
+    logger.error('Error checking admin status', { userId }, error instanceof Error ? error : undefined);
     return false;
   }
 }
@@ -47,15 +48,15 @@ export function getAdminDb() {
       const serviceAccountPath = path.join(process.cwd(), 'firebase-admin-key.json');
       
       if (fs.existsSync(serviceAccountPath)) {
-        console.log('Loading Firebase Admin credentials from firebase-admin-key.json');
+        logger.info('Loading Firebase Admin credentials from firebase-admin-key.json');
         const serviceAccountContent = fs.readFileSync(serviceAccountPath, 'utf-8');
         const serviceAccount = JSON.parse(serviceAccountContent);
         credential = admin.credential.cert(serviceAccount);
       } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        console.log('Loading Firebase Admin credentials from GOOGLE_APPLICATION_CREDENTIALS');
+        logger.info('Loading Firebase Admin credentials from GOOGLE_APPLICATION_CREDENTIALS');
         credential = admin.credential.applicationDefault();
       } else {
-        console.log('Using default Firebase Admin credentials (for Cloud Run/GCP)');
+        logger.info('Using default Firebase Admin credentials (for Cloud Run/GCP)');
         credential = admin.credential.applicationDefault();
       }
       
@@ -69,7 +70,7 @@ export function getAdminDb() {
     adminInitialized = true;
     return adminDb;
   } catch (error) {
-    console.error('Firebase Admin SDK not initialized:', error);
+    logger.error('Firebase Admin SDK not initialized', {}, error instanceof Error ? error : undefined);
     throw new Error('Firebase Admin SDK initialization failed. Check credentials.');
   }
 }
@@ -232,9 +233,10 @@ export async function resetDailyUploadLimit(userId: string) {
   
   try {
     await db.collection('users').doc(userId).collection('dailyStats').doc(today).delete();
+    logger.info('Daily upload limit reset successfully', { userId, date: today });
     return { success: true, message: 'Daily upload limit reset successfully' };
   } catch (error) {
-    console.error('Error resetting daily upload limit:', error);
+    logger.error('Error resetting daily upload limit', { userId, date: today }, error instanceof Error ? error : undefined);
     throw new Error('Failed to reset daily upload limit');
   }
 }
@@ -253,10 +255,10 @@ export async function updateUserTier(
       updatedAt: new Date().toISOString()
     }, { merge: true });
     
-    console.log(`[Firestore] Updated user ${userId} to tier: ${tier}, max uploads: ${maxDailyUploads}`);
+    logger.info('User tier updated', { userId, tier, maxDailyUploads });
     return { success: true };
   } catch (error) {
-    console.error('Error updating user tier:', error);
+    logger.error('Error updating user tier', { userId, tier, maxDailyUploads }, error instanceof Error ? error : undefined);
     throw new Error('Failed to update user tier');
   }
 }
@@ -280,7 +282,7 @@ export async function getUserTier(userId: string): Promise<{
       maxDailyUploads: data?.maxDailyUploads || 2
     };
   } catch (error) {
-    console.error('Error getting user tier:', error);
+    logger.error('Error getting user tier', { userId }, error instanceof Error ? error : undefined);
     return { tier: 'free', maxDailyUploads: 2 };
   }
 }
@@ -305,10 +307,10 @@ export async function ensureUserInitialized(userId: string, email?: string) {
         createdAt: new Date().toISOString(),
         ...(email && { email })
       });
-      console.log(`[Firestore] Initialized new user document for ${userId}`);
+      logger.info('Initialized new user document', { userId, email: email || 'none' });
     }
   } catch (error) {
-    console.error('Error initializing user document:', error);
+    logger.warning('Error initializing user document', { userId }, error instanceof Error ? error : undefined);
     // Don't throw - this is a best-effort initialization
   }
 }
@@ -327,10 +329,10 @@ export async function setAdminStatus(userId: string, isAdmin: boolean) {
       adminUpdatedAt: new Date().toISOString()
     }, { merge: true });
     
-    console.log(`[Firestore] Updated user ${userId} admin status: ${isAdmin}`);
+    logger.info('Admin status updated', { userId, isAdmin });
     return { success: true, message: `Admin status ${isAdmin ? 'granted' : 'revoked'} for user ${userId}` };
   } catch (error) {
-    console.error('Error setting admin status:', error);
+    logger.error('Error setting admin status', { userId, isAdmin }, error instanceof Error ? error : undefined);
     throw new Error('Failed to set admin status');
   }
 }

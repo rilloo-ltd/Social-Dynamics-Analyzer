@@ -12,27 +12,47 @@ import {
   logFeedback as firestoreLogFeedback,
   logGeminiUsage
 } from '@/lib/firestore-admin';
+import { logger } from '@/lib/logger';
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '@/lib/constants';
 
 export async function uploadChatAction(userId: string, text: string, forceNew?: boolean) {
   if (!userId) {
+    logger.error('Upload chat action failed: Missing user ID', { userId });
     throw new Error('User ID required');
   }
   
   if (!text) {
+    logger.error('Upload chat action failed: No text provided', { userId });
     throw new Error('No text provided');
   }
 
   // Log payload size for debugging
   const sizeInBytes = Buffer.byteLength(text, 'utf8');
   const sizeInKB = (sizeInBytes / 1024).toFixed(2);
-  console.log(`[uploadChatAction] Payload size: ${sizeInKB} KB`);
+  const sizeMB = (sizeInBytes / 1024 / 1024).toFixed(2);
+  
+  logger.info('Upload chat action started', {
+    userId,
+    fileSize: sizeInBytes,
+    fileSizeKB: parseFloat(sizeInKB),
+    fileSizeMB: parseFloat(sizeMB),
+    forceNew
+  });
 
-  if (sizeInBytes > 3 * 1024 * 1024) { // 3MB limit
-    throw new Error(`Chat text is too large (${sizeInKB} KB). Maximum allowed is 3 MB.`);
+  if (sizeInBytes > MAX_FILE_SIZE_BYTES) {
+    logger.warning('File too large rejected', {
+      userId,
+      fileSize: sizeInBytes,
+      fileSizeKB: parseFloat(sizeInKB),
+      fileSizeMB: parseFloat(sizeMB),
+      maxAllowedMB: MAX_FILE_SIZE_MB
+    });
+    throw new Error(`הקובץ גדול מדי (${sizeMB} MB). המקסימום המותר הוא ${MAX_FILE_SIZE_MB} MB.`);
   }
 
   const code = generateChatCode(text);
   if (!code) {
+    logger.error('Failed to generate chat code', { userId });
     throw new Error('Could not generate chat code (empty content)');
   }
 
@@ -40,13 +60,21 @@ export async function uploadChatAction(userId: string, text: string, forceNew?: 
   const existingChat = await getChat(userId, code);
   
   if (existingChat && !forceNew) {
-    console.log(`Chat with code ${code} already exists. Returning existing data.`);
+    logger.info('Chat already exists, returning cached data', {
+      userId,
+      chatCode: code,
+      hasOutputs: !!existingChat.outputs
+    });
     return { success: true, code, existingOutputs: existingChat.outputs || {} };
   }
 
   await storeChat(userId, code, text);
 
-  console.log(`[uploadChatAction] Chat stored successfully with code: ${code}`);
+  logger.info('Chat stored successfully', {
+    userId,
+    chatCode: code,
+    fileSize: sizeInBytes
+  });
   return { success: true, code, existingOutputs: {} };
 }
 
