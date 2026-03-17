@@ -89,39 +89,43 @@ export function getAdminDb() {
 
 // ============ UTILITY FUNCTIONS ============
 
+/**
+ * Validate that a string is safe to use as a Firestore document ID
+ */
+function isValidFirestoreDocumentId(id: string): boolean {
+  if (!id || id.length === 0) return false;
+  if (id.length > 1500) return false;
+  if (id === '.' || id === '..') return false;
+  if (id.includes('/')) return false;
+  // Check for invalid characters (only allow alphanumeric, dash, underscore)
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) return false;
+  return true;
+}
+
+/**
+ * Generate a unique, Firestore-safe chat code from text content
+ * Uses SHA-256 hash to ensure compatibility with Firestore document IDs
+ */
 export function generateChatCode(text: string): string {
-  const allWords = text.split(/\s+/);
-  const contentWords = [];
-  
-  for (const rawWord of allWords) {
-    let w = rawWord.trim();
-    if (!w) continue;
-    if (/^\[.*?\]$/.test(w)) continue;
-    
-    const pMatch = w.match(/^(P\d+:)(.*)/);
-    if (pMatch) {
-      const rest = pMatch[2];
-      if (!rest) continue;
-      w = rest;
-    }
-    
-    if (w) {
-      contentWords.push(w);
-    }
-  }
-
-  let first10: string[] = [];
-  let last10: string[] = [];
-
-  if (contentWords.length <= 20) {
-    first10 = contentWords;
-    last10 = [];
-  } else {
-    first10 = contentWords.slice(0, 10);
-    last10 = contentWords.slice(-10);
+  if (!text || !text.trim()) {
+    return '';
   }
   
-  return [...first10, ...last10].map(w => w.charAt(0)).join('');
+  // Use Node.js crypto to generate a hash
+  const crypto = require('crypto');
+  const hash = crypto.createHash('sha256').update(text).digest('hex');
+  
+  // Take first 32 characters for a reasonable document ID length
+  // This is URL-safe and Firestore-compatible (only hex chars: 0-9, a-f)
+  const code = hash.substring(0, 32);
+  
+  // Validate (should always pass, but defensive check)
+  if (!isValidFirestoreDocumentId(code)) {
+    logger.error('Generated invalid Firestore document ID', { code });
+    throw new Error('Failed to generate valid chat code');
+  }
+  
+  return code;
 }
 
 // ============ CHAT OPERATIONS ============
@@ -129,26 +133,46 @@ export function generateChatCode(text: string): string {
 export async function storeChat(userId: string, chatCode: string, text: string) {
   const db = getAdminDb();
   
-  await db.collection('users').doc(userId).collection('chats').doc(chatCode).set({
-    code: chatCode,
-    text,
-    timestamp: new Date().toISOString(),
-    outputs: {}
-  });
-  
-  return chatCode;
+  try {
+    await db.collection('users').doc(userId).collection('chats').doc(chatCode).set({
+      code: chatCode,
+      text,
+      timestamp: new Date().toISOString(),
+      outputs: {}
+    });
+    
+    logger.info('Chat stored in Firestore', { userId, chatCode, textLength: text.length });
+    return chatCode;
+  } catch (error) {
+    logger.error('Failed to store chat in Firestore', {
+      userId,
+      chatCode,
+      chatCodeLength: chatCode.length,
+      textLength: text.length
+    }, error instanceof Error ? error : undefined);
+    throw error;
+  }
 }
 
 export async function getChat(userId: string, chatCode: string) {
   const db = getAdminDb();
   
-  const chatDoc = await db.collection('users').doc(userId).collection('chats').doc(chatCode).get();
-  
-  if (!chatDoc.exists) {
-    return null;
+  try {
+    const chatDoc = await db.collection('users').doc(userId).collection('chats').doc(chatCode).get();
+    
+    if (!chatDoc.exists) {
+      return null;
+    }
+    
+    return chatDoc.data();
+  } catch (error) {
+    logger.error('Failed to get chat from Firestore', {
+      userId,
+      chatCode,
+      chatCodeLength: chatCode.length
+    }, error instanceof Error ? error : undefined);
+    throw error;
   }
-  
-  return chatDoc.data();
 }
 
 export async function updateChatOutput(userId: string, chatCode: string, type: string, output: any) {
