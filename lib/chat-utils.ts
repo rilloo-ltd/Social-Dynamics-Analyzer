@@ -1,8 +1,15 @@
 import { ChatMessage } from '@/types';
 
-export const getTruncatedMessages = (messages: ChatMessage[], limit = 20000): ChatMessage[] => {
+export const getTruncatedMessages = (messages: ChatMessage[], limit = Infinity): ChatMessage[] => {
+  // No truncation - return all messages for full chat history analysis
   if (!messages || messages.length === 0) return [];
   
+  // If limit is Infinity or larger than total content, return all messages
+  if (limit === Infinity) {
+    return messages;
+  }
+  
+  // Legacy truncation logic (kept for compatibility but not used with Infinity limit)
   let accumulatedLength = 0;
   let startIndex = 0;
   

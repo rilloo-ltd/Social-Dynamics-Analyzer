@@ -16,22 +16,22 @@ export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 export const TIER_CONFIG: Record<UserTier, { label: string, description: string, limit: number, icon: React.ReactNode, color: string }> = {
   free: { 
     label: 'משתמש חופשי', 
-    description: 'ניתוח של כ-3 חודשים אחרונים (כ-20,000 תווים)', 
-    limit: 20000,
+    description: 'ניתוח מלא של כל ההיסטוריה (ללא הגבלה)', 
+    limit: Infinity, // Full history analysis
     icon: <User className="w-5 h-5" />,
     color: 'bg-slate-100 border-slate-200 text-slate-700'
   },
   advanced: { 
     label: 'משתמש מתקדם', 
-    description: 'ניתוח של כ-6 חודשים אחרונים (כ-50,000 תווים)', 
-    limit: 50000,
+    description: 'ניתוח מלא של כל ההיסטוריה (ללא הגבלה)', 
+    limit: Infinity, // Full history analysis
     icon: <Zap className="w-5 h-5" />,
     color: 'bg-indigo-50 border-indigo-200 text-indigo-700'
   },
   super: { 
     label: 'משתמש-על', 
-    description: 'ניתוח של כל ההיסטוריה (עד 300,000 תווים)', 
-    limit: 300000,
+    description: 'ניתוח מלא של כל ההיסטוריה (ללא הגבלה)', 
+    limit: Infinity, // Full history analysis
     icon: <Star className="w-5 h-5" />,
     color: 'bg-amber-50 border-amber-200 text-amber-700'
   }

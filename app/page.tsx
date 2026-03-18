@@ -8,6 +8,7 @@ import { ChatMessage, ParsedChat, AnalysisType, CardColor, UserTier } from '@/ty
 import { serverAnalyzeChatFull, serverAnalyzeGroupDynamics, serverAnalyzeRomanticDynamics } from '@/lib/gemini-server';
 import { getChatMetadata, getTruncatedMessages } from '@/lib/chat-utils';
 import { uploadChatAction, updateChatCacheAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
+import { checkUnlimitedAccessAction } from '@/app/actions/admin-actions';
 import { AnalysisCard } from '@/components/AnalysisCard';
 import { AnalysisModal } from '@/components/AnalysisModal';
 import { GroupParticipantSelector } from '@/components/GroupParticipantSelector';
@@ -111,8 +112,26 @@ export default function HomePage() {
           })
           .catch(err => console.error('Error checking admin:', err));
         });
+        
+        // Check user's tier for analysis limits
+        checkUnlimitedAccessAction(user.uid).then(result => {
+          console.log('User tier check:', result);
+          if (result.hasUnlimited) {
+            // User has unlimited access via promo code
+            setSelectedTier('super');
+            console.log('User has unlimited access - set tier to super');
+          } else if (result.tier) {
+            // Set tier based on their actual tier from Firestore
+            setSelectedTier(result.tier as UserTier);
+            console.log('User tier set to:', result.tier);
+          }
+        }).catch(err => {
+          console.error('Error checking user tier:', err);
+          // Keep default 'free' tier on error
+        });
       } else {
         setIsAdmin(false);
+        setSelectedTier('free'); // Reset to free tier when logged out
       }
     });
     return () => unsubscribe();
@@ -196,6 +215,24 @@ export default function HomePage() {
     console.log('Current showPromoCodeModal:', showPromoCodeModal);
     setShowPromoCodeModal(true);
     console.log('setShowPromoCodeModal(true) called');
+  };
+
+  const refreshUserTier = async () => {
+    if (!authUser) return;
+    
+    try {
+      const result = await checkUnlimitedAccessAction(authUser.uid);
+      console.log('Tier refreshed:', result);
+      if (result.hasUnlimited) {
+        setSelectedTier('super');
+        console.log('Tier upgraded to super (unlimited access)');
+      } else if (result.tier) {
+        setSelectedTier(result.tier as UserTier);
+        console.log('Tier set to:', result.tier);
+      }
+    } catch (err) {
+      console.error('Error refreshing user tier:', err);
+    }
   };
 
   const handleUpgrade = async (tier: 'basic' | 'super') => {
@@ -335,16 +372,8 @@ export default function HomePage() {
         return line;
       }).join('\n');
 
-      // Truncate based on selected tier
-      const limit = TIER_CONFIG[selectedTier].limit;
-      if (formattedAnonymizedText.length > limit) {
-          formattedAnonymizedText = formattedAnonymizedText.slice(-limit);
-          // Ensure we don't cut in the middle of a line
-          const firstNewLine = formattedAnonymizedText.indexOf('\n');
-          if (firstNewLine !== -1) {
-              formattedAnonymizedText = formattedAnonymizedText.slice(firstNewLine + 1);
-          }
-      }
+      // No truncation - analyze full chat history for all users
+      console.log(`[App] Processing full chat history - ${formattedAnonymizedText.length} characters`);
 
       // Calculate token count based on character count / 4
       const estimatedTokens = Math.ceil(formattedAnonymizedText.length / 4);
@@ -441,7 +470,8 @@ export default function HomePage() {
       setActiveAnalysisType(type);
       setCurrentLoadingSnippet(getNextHighlight());
       try {
-        const limit = TIER_CONFIG[selectedTier].limit;
+        // No character limit - analyze full chat history
+        const limit = Infinity;
         
         // Check cache for group dynamics
         const cacheKey = participants && participants.length > 0 
@@ -491,7 +521,8 @@ export default function HomePage() {
       setActiveAnalysisType(type);
       setCurrentLoadingSnippet(getNextHighlight());
       try {
-        const limit = TIER_CONFIG[selectedTier].limit;
+        // No character limit - analyze full chat history
+        const limit = Infinity;
         
         // Check cache
         const cacheKey = 'romantic_dynamics';
@@ -544,7 +575,8 @@ export default function HomePage() {
     setCurrentLoadingSnippet(getNextHighlight());
 
     try {
-      const limit = TIER_CONFIG[selectedTier].limit;
+      // No character limit - analyze full chat history
+      const limit = Infinity;
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
       
       // Check cache for full analysis
@@ -1107,11 +1139,12 @@ export default function HomePage() {
               setShowPromoCodeModal(false);
             }}
             userId={authUser.uid}
-            onSuccess={() => {
+            onSuccess={async () => {
               console.log('Promo code redeemed successfully');
               setShowPromoCodeModal(false);
-              // Refresh the page to update limits
-              router.refresh();
+              // Refresh user tier immediately
+              await refreshUserTier();
+              alert('✅ הקוד הופעל! עכשיו אתה יכול לנתח את כל ההיסטוריה של השיחות שלך.');
             }}
           />
         )}
@@ -1247,8 +1280,8 @@ export default function HomePage() {
         <GroupParticipantSelector
           isOpen={isGroupSelectorOpen}
           participants={(() => {
-             const limit = TIER_CONFIG[selectedTier].limit;
-             const truncatedMsgs = getTruncatedMessages(chatData.anonymizedMessages, limit);
+             // Use all messages to count participation (no truncation)
+             const truncatedMsgs = getTruncatedMessages(chatData.anonymizedMessages, Infinity);
              const counts: Record<string, number> = {};
              truncatedMsgs.forEach(m => {
                  counts[m.sender] = (counts[m.sender] || 0) + 1;
@@ -1285,11 +1318,12 @@ export default function HomePage() {
             setShowPromoCodeModal(false);
           }}
           userId={authUser.uid}
-          onSuccess={() => {
+          onSuccess={async () => {
             console.log('Promo code redeemed successfully');
             setShowPromoCodeModal(false);
-            // Refresh the page to update limits
-            router.refresh();
+            // Refresh user tier immediately
+            await refreshUserTier();
+            alert('✅ הקוד הופעל! עכשיו אתה יכול לנתח את כל ההיסטוריה של השיחות שלך.');
           }}
         />
       )}
