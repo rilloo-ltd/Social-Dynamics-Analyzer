@@ -1351,9 +1351,14 @@ export default function HomePage() {
             });
           } else {
             // Clear all 4 individual analysis types, keep only GROUP if it exists
-            setUserAnalysisData(prev => 
-              prev.GROUP ? { GROUP: prev.GROUP } : {}
-            );
+            setUserAnalysisData(prev => {
+              const newData = { ...prev };
+              delete newData.PERSONALITY;
+              delete newData.WHAT_OTHERS_THINK;
+              delete newData.IMPROVEMENT;
+              delete newData.HIDDEN_THOUGHTS;
+              return newData;
+            });
           }
           
           // Execute with cache bypass
