@@ -1,6 +1,5 @@
 'use server';
 
-import { generateChatCode } from '@/lib/firestore-admin';
 import { 
   storeChat, 
   getChat, 
@@ -13,77 +12,90 @@ import {
   logGeminiUsage
 } from '@/lib/firestore-admin';
 import { logger } from '@/lib/logger';
-import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '@/lib/constants';
 
-export async function uploadChatAction(userId: string, text: string, forceNew?: boolean) {
+export async function uploadChatAction(userId: string, chatCode: string, textLength: number, forceNew: boolean = false) {
+  if (!userId || !chatCode) {
+    throw new Error('Missing required fields');
+  }
+
   try {
-    if (!userId) {
-      logger.error('Upload chat action failed: Missing user ID', { userId });
-      throw new Error('User ID required');
-    }
-    
-    if (!text) {
-      logger.error('Upload chat action failed: No text provided', { userId });
-      throw new Error('No text provided');
-    }
-
-    // Log payload size for debugging
-    const sizeInBytes = Buffer.byteLength(text, 'utf8');
-    const sizeInKB = (sizeInBytes / 1024).toFixed(2);
-    const sizeMB = (sizeInBytes / 1024 / 1024).toFixed(2);
-    
     logger.info('Upload chat action started', {
       userId,
-      fileSize: sizeInBytes,
-      fileSizeKB: parseFloat(sizeInKB),
-      fileSizeMB: parseFloat(sizeMB),
+      chatCode,
+      textLength,
       forceNew
     });
 
-    if (sizeInBytes > MAX_FILE_SIZE_BYTES) {
-      logger.warning('File too large rejected', {
-        userId,
-        fileSize: sizeInBytes,
-        fileSizeKB: parseFloat(sizeInKB),
-        fileSizeMB: parseFloat(sizeMB),
-        maxAllowedMB: MAX_FILE_SIZE_MB
-      });
-      throw new Error(`הקובץ גדול מדי (${sizeMB} MB). המקסימום המותר הוא ${MAX_FILE_SIZE_MB} MB.`);
-    }
-
-    const code = generateChatCode(text);
-    if (!code) {
-      logger.error('Failed to generate chat code', { userId });
-      throw new Error('Could not generate chat code (empty content)');
-    }
-
     // Check if chat already exists
-    const existingChat = await getChat(userId, code);
+    const existingChat = await getChat(userId, chatCode);
     
     if (existingChat && !forceNew) {
       logger.info('Chat already exists, returning cached data', {
         userId,
-        chatCode: code,
+        chatCode,
         hasOutputs: !!existingChat.outputs
       });
-      return { success: true, code, existingOutputs: existingChat.outputs || {} };
+      
+      // Don't parse or return large outputs through Server Action
+      // Client will load them separately if needed
+      return { success: true, code: chatCode, hasExistingOutputs: !!existingChat.outputs };
     }
 
-    await storeChat(userId, code, text);
+    // Store chat metadata (clear outputs if forceNew)
+    await storeChat(userId, chatCode, textLength, forceNew || !existingChat);
 
     logger.info('Chat stored successfully', {
       userId,
-      chatCode: code,
-      fileSize: sizeInBytes
+      chatCode,
+      textLength
     });
-    return { success: true, code, existingOutputs: {} };
+    return { success: true, code: chatCode, hasExistingOutputs: false };
   } catch (error) {
     logger.error('Upload chat action failed with unexpected error', {
       userId,
-      textLength: text?.length || 0,
+      chatCode,
+      textLength,
       forceNew
     }, error instanceof Error ? error : undefined);
     throw error;
+  }
+}
+
+export async function loadCachedOutputsAction(userId: string, chatCode: string) {
+  if (!userId || !chatCode) {
+    throw new Error('Missing required fields');
+  }
+
+  try {
+    const existingChat = await getChat(userId, chatCode);
+    
+    if (!existingChat || !existingChat.outputs) {
+      return { success: true, outputs: {} };
+    }
+    
+    // Parse JSON strings back to objects if needed
+    const parsedOutputs: any = {};
+    for (const [key, value] of Object.entries(existingChat.outputs)) {
+      // Skip timestamp fields
+      if (key.endsWith('_timestamp')) continue;
+      
+      // Try to parse JSON strings back to objects
+      if (typeof value === 'string') {
+        try {
+          parsedOutputs[key] = JSON.parse(value);
+        } catch {
+          // If not JSON, store as-is
+          parsedOutputs[key] = value;
+        }
+      } else {
+        parsedOutputs[key] = value;
+      }
+    }
+    
+    return { success: true, outputs: parsedOutputs };
+  } catch (error) {
+    logger.error('Load cached outputs failed', { userId, chatCode }, error instanceof Error ? error : undefined);
+    return { success: false, outputs: {} };
   }
 }
 

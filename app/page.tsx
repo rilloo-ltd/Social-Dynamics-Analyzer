@@ -8,7 +8,8 @@ import { ChatMessage, ParsedChat, AnalysisType, CardColor, UserTier } from '@/ty
 import { serverAnalyzeChatFull, serverAnalyzeGroupDynamics, serverAnalyzeRomanticDynamics } from '@/lib/gemini-server';
 import { createFullAnalysisCacheKey, createGroupDynamicsCacheKey } from '@/lib/cache-utils';
 import { getChatMetadata, getTruncatedMessages } from '@/lib/chat-utils';
-import { uploadChatAction, updateChatCacheAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
+import { uploadChatAction, updateChatCacheAction, loadCachedOutputsAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
+import { generateChatCodeClient } from '@/lib/client-hash';
 import { checkUnlimitedAccessAction } from '@/app/actions/admin-actions';
 import { AnalysisCard } from '@/components/AnalysisCard';
 import { AnalysisModal } from '@/components/AnalysisModal';
@@ -269,19 +270,38 @@ export default function HomePage() {
   const storeChat = async (text: string) => {
     if (!authUser) return null; // Guest users don't need to store chat
     try {
-      const data = await uploadChatAction(authUser.uid, text, isNewSessionMode);
+      // Generate hash on client-side to avoid sending large data to server
+      const chatCode = await generateChatCodeClient(text);
+      if (!chatCode) {
+        throw new Error('Failed to generate chat code');
+      }
+      
+      const data = await uploadChatAction(authUser.uid, chatCode, text.length, isNewSessionMode);
       if (data.code) {
         // Always reset cached outputs first to ensure state is clean
         setCachedOutputs({});
         setChatCode(data.code);
         console.log("Chat stored with code:", data.code);
         
-        if (data.existingOutputs && !isNewSessionMode) {
-          console.log("Found existing outputs:", Object.keys(data.existingOutputs));
-          // Set cached outputs after a small delay to ensure state update is detected
-          setTimeout(() => {
-            setCachedOutputs(data.existingOutputs);
-          }, 0);
+        // Load existing outputs separately if they exist
+        if (data.hasExistingOutputs && !isNewSessionMode) {
+          console.log("Loading existing outputs...");
+          loadCachedOutputsAction(authUser.uid, data.code).then(result => {
+            if (result.success && result.outputs) {
+              console.log("Loaded existing outputs:", Object.keys(result.outputs));
+              // Wrap outputs in expected format { output, timestamp }
+              const wrappedOutputs: any = {};
+              for (const [key, value] of Object.entries(result.outputs)) {
+                wrappedOutputs[key] = {
+                  output: value,
+                  timestamp: new Date().toISOString()
+                };
+              }
+              setCachedOutputs(wrappedOutputs);
+            }
+          }).catch(e => {
+            console.error("Failed to load cached outputs", e);
+          });
         }
         
         return data.code;
@@ -686,16 +706,8 @@ export default function HomePage() {
     
     if (!chatData) return;
 
-    // Check if cache exists for this analysis
-    const cacheKey = getCacheKey(type, participants);
-    if (cacheKey && cachedOutputs[cacheKey]) {
-      // Show confirmation modal
-      setPendingAnalysis({ type, participants });
-      setShowRegenerateConfirm(true);
-      return;
-    }
-
-    // No cache - execute directly
+    // Always execute with existing cache (bypassCache: false)
+    // User can regenerate from within the modal if they want
     await executeAnalysis(type, participants, false);
   };
 
@@ -1314,6 +1326,43 @@ export default function HomePage() {
         onShare={(platform) => logShare(activeAnalysisType || 'UNKNOWN', platform)}
         onLogImageGeneration={logImageGeneration}
         onLogFeedback={logFeedback}
+        onRegenerate={async () => {
+          if (!activeAnalysisType) return;
+          // Get participants for group analysis
+          const participants = activeAnalysisType === AnalysisType.GROUP_DYNAMICS ? userAnalysisData.GROUP?.participants : undefined;
+          
+          // Clear cache
+          const cacheKey = getCacheKey(activeAnalysisType, participants);
+          if (cacheKey) {
+            setCachedOutputs(prev => {
+              const newCache = { ...prev };
+              delete newCache[cacheKey];
+              return newCache;
+            });
+          }
+          
+          // Clear local state based on analysis type
+          if (activeAnalysisType === AnalysisType.GROUP_DYNAMICS) {
+            setUserAnalysisData(prev => {
+              const newData = { ...prev };
+              delete newData.GROUP;
+              return newData;
+            });
+          } else {
+            // Clear all 4 individual analysis types
+            setUserAnalysisData({
+              PERSONALITY: undefined,
+              WHAT_OTHERS_THINK: undefined,
+              IMPROVEMENT: undefined,
+              HIDDEN_THOUGHTS: undefined,
+              GROUP: userAnalysisData.GROUP
+            });
+          }
+          
+          // Execute with cache bypass
+          await executeAnalysis(activeAnalysisType, participants, true);
+        }}
+        analysisType={activeAnalysisType || undefined}
         chatCode={chatCode}
         userId={authUser?.uid || null}
       />

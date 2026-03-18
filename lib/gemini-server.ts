@@ -87,8 +87,34 @@ const cleanJson = (text: string): string => {
   // Remove trailing commas before closing braces/brackets
   cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
   
-  // Fix common issues with Unicode characters in JSON strings
-  cleaned = cleaned.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+  // Remove control characters but preserve newlines and tabs in strings
+  cleaned = cleaned.replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F]/g, '');
+  
+  // Try to fix incomplete JSON by ensuring it ends properly
+  // Count opening and closing braces
+  const openBraces = (cleaned.match(/\{/g) || []).length;
+  const closeBraces = (cleaned.match(/\}/g) || []).length;
+  
+  if (openBraces > closeBraces) {
+    // Close any unclosed strings first
+    const lastQuote = cleaned.lastIndexOf('"');
+    const lastColon = cleaned.lastIndexOf(':');
+    const lastComma = cleaned.lastIndexOf(',');
+    const lastCloseBrace = cleaned.lastIndexOf('}');
+    
+    // If last character isn't a quote or brace, we might have an unclosed string
+    if (lastQuote > Math.max(lastColon, lastComma, lastCloseBrace)) {
+      // Count quotes to see if we have an odd number (unclosed string)
+      const quotesBeforeLast = (cleaned.substring(0, lastQuote).match(/"/g) || []).length;
+      if (quotesBeforeLast % 2 === 0) {
+        // Even number before, so last quote opens a string - close it
+        cleaned += '"';
+      }
+    }
+    
+    // Add missing closing braces
+    cleaned += '}'.repeat(openBraces - closeBraces);
+  }
   
   return cleaned;
 };
@@ -189,7 +215,20 @@ ${chatContext}
 
   const result = await ai.models.generateContent({
     model: GEMINI_MODEL,
-    contents: prompt
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          personality: { type: Type.STRING },
+          othersThoughts: { type: Type.STRING },
+          improvement: { type: Type.STRING },
+          hiddenThoughts: { type: Type.STRING }
+        },
+        required: ["personality", "othersThoughts", "improvement", "hiddenThoughts"]
+      }
+    }
   });
   
   const rawText = result.text || "";
@@ -202,8 +241,20 @@ ${chatContext}
     logger.error('JSON parse error in serverAnalyzeChatFull', {
       rawTextLength: rawText?.length || 0,
       cleanedTextLength: cleanedText?.length || 0,
-      rawTextPreview: rawText?.substring(0, 200),
-      cleanedTextPreview: cleanedText?.substring(0, 200)
+      rawTextPreview: rawText?.substring(0, 500),
+      cleanedTextPreview: cleanedText?.substring(0, 500),
+      errorPosition: error instanceof SyntaxError ? (error.message.match(/position (\d+)/) || [])[1] : 'unknown',
+      contextAroundError: error instanceof SyntaxError && error.message.includes('position') ? 
+        (() => {
+          const match = error.message.match(/position (\d+)/);
+          if (match) {
+            const pos = parseInt(match[1]);
+            const start = Math.max(0, pos - 50);
+            const end = Math.min(cleanedText.length, pos + 50);
+            return cleanedText.substring(start, end);
+          }
+          return '';
+        })() : ''
     }, error instanceof Error ? error : undefined);
     
     // Fallback: return empty structure

@@ -131,28 +131,36 @@ export function generateChatCode(text: string): string {
 
 // ============ CHAT OPERATIONS ============
 
-export async function storeChat(userId: string, chatCode: string, text: string) {
+export async function storeChat(userId: string, chatCode: string, textLength: number, clearOutputs: boolean = false) {
   const db = getAdminDb();
   
   try {
     // Don't store the full text to avoid Firestore 1MB document limit
     // Only store metadata - the text stays in memory on the client
-    await db.collection('users').doc(userId).collection('chats').doc(chatCode).set({
+    const data: any = {
       code: chatCode,
-      textLength: text.length,
-      textPreview: text.substring(0, 500), // Store small preview for reference
-      timestamp: new Date().toISOString(),
-      outputs: {}
-    });
+      textLength: textLength,
+      timestamp: new Date().toISOString()
+    };
     
-    logger.info('Chat metadata stored in Firestore', { userId, chatCode, textLength: text.length });
+    // Only set outputs to empty object if explicitly clearing or creating new
+    if (clearOutputs) {
+      data.outputs = {};
+    }
+    
+    await db.collection('users').doc(userId).collection('chats').doc(chatCode).set(
+      data,
+      { merge: true }  // Preserve existing fields unless explicitly overwritten
+    );
+    
+    logger.info('Chat metadata stored in Firestore', { userId, chatCode, textLength, clearOutputs });
     return chatCode;
   } catch (error) {
     logger.error('Failed to store chat metadata in Firestore', {
       userId,
       chatCode,
       chatCodeLength: chatCode.length,
-      textLength: text.length
+      textLength
     }, error instanceof Error ? error : undefined);
     throw error;
   }
@@ -185,11 +193,13 @@ export async function updateChatOutput(userId: string, chatCode: string, type: s
   // Sanitize the cache key to ensure valid Firestore field path
   const sanitizedType = sanitizeCacheKey(type);
   
+  // Flatten the structure to avoid deep nesting issues
+  // Store output as JSON string if it's an object
+  const outputToStore = typeof output === 'string' ? output : JSON.stringify(output);
+  
   await db.collection('users').doc(userId).collection('chats').doc(chatCode).update({
-    [`outputs.${sanitizedType}`]: {
-      output,
-      timestamp: new Date().toISOString()
-    }
+    [`outputs.${sanitizedType}`]: outputToStore,
+    [`outputs.${sanitizedType}_timestamp`]: new Date().toISOString()
   });
 }
 

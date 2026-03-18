@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { CardColor } from '../types';
+import { CardColor, AnalysisType } from '../types';
 import { serverSummarizeForSharing, serverGetVisualAssetData, serverGenerateCartoonImage, VisualAssetData } from '@/lib/gemini-server';
 import { updateChatCacheAction } from '@/app/actions/analytics-actions';
 
@@ -18,6 +18,8 @@ interface AnalysisModalProps {
   onShare?: (platform: string) => void;
   onLogImageGeneration?: () => void;
   onLogFeedback?: (rating: number, comment: string) => void;
+  onRegenerate?: () => void;
+  analysisType?: AnalysisType;
   chatCode?: string | null;
   userId?: string | null;
 }
@@ -177,7 +179,7 @@ const MarkdownRenderer = ({ text }: { text: string }) => {
 };
 
 export const AnalysisModal: React.FC<AnalysisModalProps> = ({ 
-  isOpen, onClose, title, icon, content, loading, loadingHighlight, loadingMessage, color, onShare, onLogImageGeneration, onLogFeedback, chatCode, userId 
+  isOpen, onClose, title, icon, content, loading, loadingHighlight, loadingMessage, color, onShare, onLogImageGeneration, onLogFeedback, onRegenerate, analysisType, chatCode, userId 
 }) => {
   const styles = colorStyles[color] || colorStyles.blue;
   const [shareHubState, setShareHubState] = useState<'closed' | 'version' | 'platform' | 'visual_preview'>('closed');
@@ -537,6 +539,33 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                         <div className="text-green-600 font-bold text-lg mb-2">תודה על המשוב!</div>
                         <p className="text-green-700 text-sm">הדעה שלכם חשובה לנו ועוזרת לנו להשתפר.</p>
                     </div>
+                )}
+
+                {/* Regenerate Button - only when content exists */}
+                {onRegenerate && (
+                  <div className="mt-8 space-y-4">
+                    {/* Note for individual analysis types */}
+                    {analysisType !== AnalysisType.GROUP_DYNAMICS && (
+                      <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-center text-sm text-amber-800">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <strong>שימו לב:</strong> יצירת ניתוח מחדש תחליף את כל 4 הדוחות האישיים
+                      </div>
+                    )}
+                    
+                    <div className="flex justify-center">
+                      <button 
+                        onClick={onRegenerate}
+                        className="px-8 py-3 rounded-full font-bold bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 flex items-center gap-2 cursor-pointer"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span>צור ניתוח מחדש</span>
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 <div className="mt-8 flex justify-center">
