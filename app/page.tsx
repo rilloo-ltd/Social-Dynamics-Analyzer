@@ -1362,7 +1362,7 @@ export default function HomePage() {
           
           // Execute with cache bypass
           await executeAnalysis(activeAnalysisType, participants, true);
-        }}}
+        }}
         analysisType={activeAnalysisType || undefined}
         chatCode={chatCode}
         userId={authUser?.uid || null}
