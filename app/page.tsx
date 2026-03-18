@@ -6,6 +6,7 @@ import { FileUpload } from '@/components/FileUpload';
 import { parseChatFile } from '@/services/chatParser';
 import { ChatMessage, ParsedChat, AnalysisType, CardColor, UserTier } from '@/types';
 import { serverAnalyzeChatFull, serverAnalyzeGroupDynamics, serverAnalyzeRomanticDynamics } from '@/lib/gemini-server';
+import { createFullAnalysisCacheKey, createGroupDynamicsCacheKey } from '@/lib/cache-utils';
 import { getChatMetadata, getTruncatedMessages } from '@/lib/chat-utils';
 import { uploadChatAction, updateChatCacheAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
 import { checkUnlimitedAccessAction } from '@/app/actions/admin-actions';
@@ -403,7 +404,13 @@ export default function HomePage() {
         }
       }
 
-      const deanonymize = (t: string) => {
+      const deanonymize = (t: any): string => {
+        // Type guard - return as-is if not a string
+        if (typeof t !== 'string') {
+          console.warn('deanonymize received non-string type:', typeof t);
+          return t;
+        }
+        
         let txt = t || "";
         if (!parsed.reverseMap) return txt;
         const sortedKeys = Object.keys(parsed.reverseMap).sort((a, b) => b.length - a.length);
@@ -447,16 +454,14 @@ export default function HomePage() {
   // Helper to check if cache exists for this analysis
   const getCacheKey = (type: AnalysisType, participants?: string[]): string => {
     if (type === AnalysisType.GROUP_DYNAMICS) {
-      return participants && participants.length > 0 
-        ? `group_dynamics:${participants.sort().join(',')}` 
-        : 'group_dynamics:all';
+      return createGroupDynamicsCacheKey(participants);
     }
     if (type === AnalysisType.ROMANTIC_DYNAMICS) {
-      return 'romantic_dynamics';
+      return 'romantic_dynamics'; // Already safe, no special chars
     }
     if (selectedUser && chatData) {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
-      return `full_analysis:${anonUser}`;
+      return createFullAnalysisCacheKey(anonUser);
     }
     return '';
   };
@@ -474,25 +479,37 @@ export default function HomePage() {
         const limit = Infinity;
         
         // Check cache for group dynamics
-        const cacheKey = participants && participants.length > 0 
-            ? `group_dynamics:${participants.sort().join(',')}` 
-            : 'group_dynamics:all';
+        const cacheKey = createGroupDynamicsCacheKey(participants);
         
         let result = "";
+        let strategy: 'full' | 'sampled' | undefined;
+        let originalWordCount: number | undefined;
+        
         if (!bypassCache && cachedOutputs[cacheKey]) {
             console.log("Using cached group dynamics analysis");
             result = cachedOutputs[cacheKey].output;
+            strategy = cachedOutputs[cacheKey].strategy;
+            originalWordCount = cachedOutputs[cacheKey].originalWordCount;
         } else {
-            result = await serverAnalyzeGroupDynamics(chatData.anonymizedMessages, participants, limit);
+            const analysisResult = await serverAnalyzeGroupDynamics(chatData.anonymizedMessages, participants, limit);
+            result = analysisResult.result;
+            strategy = analysisResult.strategy;
+            originalWordCount = analysisResult.originalWordCount;
             // Update cache locally so subsequent calls use it
-            setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
+            setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString(), strategy, originalWordCount } }));
             // Persist to storage
             if (chatCode && authUser) {
                 updateChatCacheAction(authUser.uid, chatCode, cacheKey, result).catch(e => console.error('Failed to cache group dynamics', e));
             }
         }
 
-        const deanonymize = (t: string) => {
+        const deanonymize = (t: any): string => {
+            // Type guard - return as-is if not a string
+            if (typeof t !== 'string') {
+              console.warn('deanonymize received non-string type:', typeof t);
+              return t;
+            }
+            
             let txt = t || "";
             if (!chatData.reverseMap) return txt;
             // Normalize [Participant_X] to PX to handle model output discrepancies
@@ -502,7 +519,12 @@ export default function HomePage() {
             const pattern = new RegExp(sortedKeys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|"), "g");
             return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
         };
-        setUserAnalysisData(prev => ({ ...prev, GROUP: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
+        
+        // Add asterisk indicator if analysis was sampled
+        const sampledIndicator = strategy === 'sampled' ? '**\\*** ' : '';
+        const deanonymizedResult = PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(result);
+        
+        setUserAnalysisData(prev => ({ ...prev, GROUP: { content: deanonymizedResult } }));
       } catch (e: any) { 
         logClientError('Group dynamics analysis failed', e, {
           userId: authUser?.uid,
@@ -539,7 +561,13 @@ export default function HomePage() {
             }
         }
 
-        const deanonymize = (t: string) => {
+        const deanonymize = (t: any): string => {
+            // Type guard - return as-is if not a string
+            if (typeof t !== 'string') {
+              console.warn('deanonymize received non-string type:', typeof t);
+              return t;
+            }
+            
             let txt = t || "";
             if (!chatData.reverseMap) return txt;
             txt = txt.replace(/\[Participant_(\d+)\]/g, 'P$1');
@@ -580,23 +608,41 @@ export default function HomePage() {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
       
       // Check cache for full analysis
-      const cacheKey = `full_analysis:${anonUser}`;
-      let rawResult: Record<string, string> = {};
+      const cacheKey = createFullAnalysisCacheKey(anonUser);
+      let rawResult: any = {};
+      let strategy: 'full' | 'sampled' | undefined;
+      let originalWordCount: number | undefined;
 
       if (!bypassCache && cachedOutputs[cacheKey]) {
           console.log(`Using cached full analysis for ${anonUser}`);
           rawResult = cachedOutputs[cacheKey].output;
+          strategy = cachedOutputs[cacheKey].strategy;
+          originalWordCount = cachedOutputs[cacheKey].originalWordCount;
       } else {
-          rawResult = await serverAnalyzeChatFull(chatData.anonymizedMessages, anonUser, limit);
+          const analysisResult = await serverAnalyzeChatFull(chatData.anonymizedMessages, anonUser, limit);
+          rawResult = {
+            personality: analysisResult.personality,
+            othersThoughts: analysisResult.othersThoughts,
+            improvement: analysisResult.improvement,
+            hiddenThoughts: analysisResult.hiddenThoughts
+          };
+          strategy = analysisResult.strategy;
+          originalWordCount = analysisResult.originalWordCount;
           // Update cache locally
-          setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: rawResult, timestamp: new Date().toISOString() } }));
+          setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: rawResult, timestamp: new Date().toISOString(), strategy, originalWordCount } }));
           // Persist to storage
           if (chatCode && authUser) {
               updateChatCacheAction(authUser.uid, chatCode, cacheKey, rawResult).catch(e => console.error('Failed to cache full analysis', e));
           }
       }
       
-      const deanonymize = (t: string) => {
+      const deanonymize = (t: any): string => {
+        // Type guard - return as-is if not a string
+        if (typeof t !== 'string') {
+          console.warn('deanonymize received non-string type:', typeof t);
+          return t;
+        }
+        
         let txt = t || "";
         if (!chatData.reverseMap) return txt;
         // Normalize [Participant_X] to PX to handle model output discrepancies
@@ -607,12 +653,15 @@ export default function HomePage() {
         return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
       };
 
+      // Add asterisk indicator if analysis was sampled
+      const sampledIndicator = strategy === 'sampled' ? '**\\*** ' : '';
+
       // Map server response keys to AnalysisType enum values
       const finalData: Record<string, string> = {
-        [AnalysisType.PERSONALITY]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.personality || ""),
-        [AnalysisType.OTHERS_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.othersThoughts || ""),
-        [AnalysisType.IMPROVEMENT]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.improvement || ""),
-        [AnalysisType.HIDDEN_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.hiddenThoughts || ""),
+        [AnalysisType.PERSONALITY]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.personality || ""),
+        [AnalysisType.OTHERS_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.othersThoughts || ""),
+        [AnalysisType.IMPROVEMENT]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.improvement || ""),
+        [AnalysisType.HIDDEN_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.hiddenThoughts || ""),
       };
 
       setUserAnalysisData(prev => ({ ...prev, [selectedUser]: finalData }));

@@ -2,10 +2,11 @@
 
 import 'server-only';
 import { GoogleGenAI, Type } from "@google/genai";
-import { ChatMessage } from "@/types";
+import { ChatMessage, ChunkingStrategy } from "@/types";
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { PredictionServiceClient, helpers } from '@google-cloud/aiplatform';
 import { logger } from './logger';
+import { createGroupAnalysisChunks, createIndividualAnalysisChunks, getTotalWordCount } from './chat-utils';
 
 // Gemini model configuration - change here to update all analyses
 const GEMINI_MODEL = "gemini-3-flash-preview";
@@ -128,13 +129,37 @@ export async function serverAnalyzeChatFull(
   othersThoughts: string;
   improvement: string;
   hiddenThoughts: string;
+  strategy?: ChunkingStrategy;
+  originalWordCount?: number;
 }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
-  const chatContext = truncateChatForContext(messages, limit);
+  // Apply smart chunking for large chats (> 50k words)
+  const chunkResult = createIndividualAnalysisChunks(messages, targetUser, 50000);
+  const chunkedMessages = chunkResult.chunks;
+  const strategy = chunkResult.strategy;
+  const originalWordCount = chunkResult.originalWordCount;
+  
+  // Verification logging (user requirement)
+  if (originalWordCount > 50000) {
+    const finalWordCount = getTotalWordCount(chunkedMessages);
+    const reduction = ((originalWordCount - finalWordCount) / originalWordCount * 100).toFixed(1);
+    console.log(`[Individual Analysis Verification]`);
+    console.log(`  Original: ${originalWordCount} words`);
+    console.log(`  Final: ${finalWordCount} words`);
+    console.log(`  Reduction: ${reduction}%`);
+    console.log(`  Still over 50k? ${finalWordCount > 50000 ? 'YES ⚠️' : 'NO ✓'}`);
+  }
+
+  const chatContext = truncateChatForContext(chunkedMessages, limit);
+
+  const samplingNote = strategy === 'sampled' ? `
+  שים לב: אלו הם קטעים נבחרים משיחה ארוכה יותר המתמקדים ב-${targetUser}, לא את כל השיחה המלאה.
+  אבל אל תספר למשתמש על זה - תן ניתוח כאילו זו השיחה המלאה.
+  ` : '';
 
   const prompt = `
-${getSystemInstruction()}
+${getSystemInstruction()}${samplingNote}
 
 <chat_history>
 ${chatContext}
@@ -195,6 +220,8 @@ ${chatContext}
     othersThoughts: parsed.othersThoughts || "",
     improvement: parsed.improvement || "",
     hiddenThoughts: parsed.hiddenThoughts || "",
+    strategy,
+    originalWordCount,
   };
 }
 
@@ -202,14 +229,25 @@ export async function serverAnalyzeGroupDynamics(
   messages: ChatMessage[],
   selectedParticipants: string[] | undefined,
   limit: number
-): Promise<string> {
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
-  const chatContext = truncateChatForContext(messages, limit);
+  // Apply smart chunking for large chats (> 50k words)
+  const chunkResult = createGroupAnalysisChunks(messages, 50000);
+  const chunkedMessages = chunkResult.chunks;
+  const strategy = chunkResult.strategy;
+  const originalWordCount = chunkResult.originalWordCount;
+
+  const chatContext = truncateChatForContext(chunkedMessages, limit);
+  
+  const samplingNote = strategy === 'sampled' ? `
+  שים לב: אלו הם קטעים נבחרים משיחה ארוכה יותר, לא את כל השיחה המלאה.
+  אבל אל תספר למשתמש על זה - תן ניתוח כאילו זו השיחה המלאה.
+  ` : '';
   
   const prompt = selectedParticipants && selectedParticipants.length > 0
     ? `
-${getSystemInstruction()}
+${getSystemInstruction()}${samplingNote}
 
 <chat_history>
 ${chatContext}
@@ -228,7 +266,7 @@ ${chatContext}
 
 `
     : `
-${getSystemInstruction()}
+${getSystemInstruction()}${samplingNote}
 
 <chat_history>
 ${chatContext}
@@ -252,7 +290,11 @@ ${chatContext}
     contents: prompt
   });
   
-  return result.text || "";
+  return {
+    result: result.text || "",
+    strategy,
+    originalWordCount
+  };
 }
 
 export async function serverAnalyzeRomanticDynamics(

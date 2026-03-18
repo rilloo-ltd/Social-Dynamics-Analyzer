@@ -1,5 +1,6 @@
 import 'server-only';
 import { logger } from './logger';
+import { sanitizeCacheKey } from './cache-utils';
 
 // Server-side Firestore operations using Firebase Admin SDK
 // This file is for API routes and server actions
@@ -181,8 +182,11 @@ export async function getChat(userId: string, chatCode: string) {
 export async function updateChatOutput(userId: string, chatCode: string, type: string, output: any) {
   const db = getAdminDb();
   
+  // Sanitize the cache key to ensure valid Firestore field path
+  const sanitizedType = sanitizeCacheKey(type);
+  
   await db.collection('users').doc(userId).collection('chats').doc(chatCode).update({
-    [`outputs.${type}`]: {
+    [`outputs.${sanitizedType}`]: {
       output,
       timestamp: new Date().toISOString()
     }
