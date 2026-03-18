@@ -1350,14 +1350,10 @@ export default function HomePage() {
               return newData;
             });
           } else {
-            // Clear all 4 individual analysis types
-            setUserAnalysisData({
-              PERSONALITY: undefined,
-              WHAT_OTHERS_THINK: undefined,
-              IMPROVEMENT: undefined,
-              HIDDEN_THOUGHTS: undefined,
-              GROUP: userAnalysisData.GROUP
-            });
+            // Clear all 4 individual analysis types, keep only GROUP if it exists
+            setUserAnalysisData(prev => 
+              prev.GROUP ? { GROUP: prev.GROUP } : {}
+            );
           }
           
           // Execute with cache bypass
