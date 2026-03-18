@@ -520,11 +520,7 @@ export default function HomePage() {
             return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
         };
         
-        // Add asterisk indicator if analysis was sampled
-        const sampledIndicator = strategy === 'sampled' ? '**\\*** ' : '';
-        const deanonymizedResult = PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(result);
-        
-        setUserAnalysisData(prev => ({ ...prev, GROUP: { content: deanonymizedResult } }));
+        setUserAnalysisData(prev => ({ ...prev, GROUP: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
       } catch (e: any) { 
         logClientError('Group dynamics analysis failed', e, {
           userId: authUser?.uid,
@@ -653,15 +649,12 @@ export default function HomePage() {
         return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
       };
 
-      // Add asterisk indicator if analysis was sampled
-      const sampledIndicator = strategy === 'sampled' ? '**\\*** ' : '';
-
       // Map server response keys to AnalysisType enum values
       const finalData: Record<string, string> = {
-        [AnalysisType.PERSONALITY]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.personality || ""),
-        [AnalysisType.OTHERS_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.othersThoughts || ""),
-        [AnalysisType.IMPROVEMENT]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.improvement || ""),
-        [AnalysisType.HIDDEN_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + sampledIndicator + deanonymize(rawResult.hiddenThoughts || ""),
+        [AnalysisType.PERSONALITY]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.personality || ""),
+        [AnalysisType.OTHERS_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.othersThoughts || ""),
+        [AnalysisType.IMPROVEMENT]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.improvement || ""),
+        [AnalysisType.HIDDEN_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.hiddenThoughts || ""),
       };
 
       setUserAnalysisData(prev => ({ ...prev, [selectedUser]: finalData }));
