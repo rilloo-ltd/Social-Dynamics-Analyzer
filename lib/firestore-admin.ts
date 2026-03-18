@@ -134,17 +134,20 @@ export async function storeChat(userId: string, chatCode: string, text: string) 
   const db = getAdminDb();
   
   try {
+    // Don't store the full text to avoid Firestore 1MB document limit
+    // Only store metadata - the text stays in memory on the client
     await db.collection('users').doc(userId).collection('chats').doc(chatCode).set({
       code: chatCode,
-      text,
+      textLength: text.length,
+      textPreview: text.substring(0, 500), // Store small preview for reference
       timestamp: new Date().toISOString(),
       outputs: {}
     });
     
-    logger.info('Chat stored in Firestore', { userId, chatCode, textLength: text.length });
+    logger.info('Chat metadata stored in Firestore', { userId, chatCode, textLength: text.length });
     return chatCode;
   } catch (error) {
-    logger.error('Failed to store chat in Firestore', {
+    logger.error('Failed to store chat metadata in Firestore', {
       userId,
       chatCode,
       chatCodeLength: chatCode.length,
