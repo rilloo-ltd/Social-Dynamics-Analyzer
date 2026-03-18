@@ -1328,8 +1328,9 @@ export default function HomePage() {
         onLogFeedback={logFeedback}
         onRegenerate={async () => {
           if (!activeAnalysisType) return;
-          // Get participants for group analysis
-          const participants = activeAnalysisType === AnalysisType.GROUP_DYNAMICS ? userAnalysisData.GROUP?.participants : undefined;
+          // For group analysis, use undefined (all participants)
+          // For individual analysis, no participants needed
+          const participants: string[] | undefined = undefined;
           
           // Clear cache
           const cacheKey = getCacheKey(activeAnalysisType, participants);
@@ -1361,7 +1362,7 @@ export default function HomePage() {
           
           // Execute with cache bypass
           await executeAnalysis(activeAnalysisType, participants, true);
-        }}
+        }}}
         analysisType={activeAnalysisType || undefined}
         chatCode={chatCode}
         userId={authUser?.uid || null}
