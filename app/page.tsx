@@ -848,7 +848,7 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
         <button 
-          onClick={() => router.push('/admin')} 
+          onClick={() => router.push('/admin/prompts')} 
           className="fixed top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer"
           title="Admin Login"
         >
@@ -901,7 +901,7 @@ export default function HomePage() {
           <div className="absolute top-0 left-0 right-0 z-50 px-4 py-2 sm:py-4 flex justify-end items-center gap-2">
             {isAdmin && (
               <button
-                onClick={() => router.push('/admin')}
+                onClick={() => router.push('/admin/prompts')}
                 className="p-2 sm:p-2.5 bg-yellow-500/90 backdrop-blur-sm hover:bg-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
                 title="Admin Panel"
               >
@@ -1236,7 +1236,7 @@ export default function HomePage() {
               <>
                 {isAdmin && (
                   <button
-                    onClick={() => router.push('/admin')}
+                    onClick={() => router.push('/admin/prompts')}
                     className="p-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all cursor-pointer"
                     title="Admin Panel"
                   >

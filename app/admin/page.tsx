@@ -94,7 +94,7 @@ export default function AdminPage() {
           {error && <p className="text-red-500 text-sm mb-4 text-center">{error}</p>}
           <button 
             type="submit" 
-            className={`w-full text-white p-2 rounded transition-colors ${isLoggingIn ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+            className={`w-full text-white p-2 rounded transition-colors ${isLoggingIn ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 cursor-pointer'}`}
             disabled={isLoggingIn}
           >
             {isLoggingIn ? 'Logging in...' : 'Login'}
