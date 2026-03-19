@@ -470,7 +470,7 @@ export async function logFeedback(userId: string, sessionId: string, rating: num
 export async function logGeminiUsage(inputTokens: number, outputTokens: number, model: string) {
   const db = getAdminDb();
   
-  await db.collection('globalStats').collection('geminiUsage').add({
+  await db.collection('geminiUsage').add({
     timestamp: new Date().toISOString(),
     inputTokens,
     outputTokens,
@@ -560,7 +560,7 @@ export async function getAllStats() {
   
   // Get global stats
   const buttonPressesDoc = await db.collection('globalStats').doc('buttonPresses').get();
-  const geminiUsageSnapshot = await db.collection('globalStats').collection('geminiUsage').get();
+  const geminiUsageSnapshot = await db.collection('geminiUsage').get();
   
   // Get all users' data
   const usersSnapshot = await db.collection('users').get();
@@ -628,3 +628,187 @@ export async function clearAllChats() {
   
   return { success: true };
 }
+
+// ============ PROMPT MANAGEMENT ============
+
+export interface PromptData {
+  production: string;
+  draft: string | null;
+  useDraft: boolean;
+  lastModified: string;
+  modifiedBy?: string;
+}
+
+/**
+ * Get a prompt's data from Firestore
+ * Returns null if prompt doesn't exist in Firestore (will use file-based version)
+ */
+export async function getPromptData(promptId: string): Promise<PromptData | null> {
+  const db = getAdminDb();
+  
+  try {
+    const promptDoc = await db.collection('prompts').doc(promptId).get();
+    
+    if (!promptDoc.exists) {
+      return null;
+    }
+    
+    return promptDoc.data() as PromptData;
+  } catch (error) {
+    logger.error('Error fetching prompt data', { promptId }, error instanceof Error ? error : undefined);
+    return null;
+  }
+}
+
+/**
+ * Get all prompts with their draft/testing status
+ */
+export async function getAllPrompts(): Promise<Record<string, PromptData>> {
+  const db = getAdminDb();
+  
+  try {
+    const promptsSnapshot = await db.collection('prompts').get();
+    const prompts: Record<string, PromptData> = {};
+    
+    promptsSnapshot.forEach((doc: any) => {
+      prompts[doc.id] = doc.data() as PromptData;
+    });
+    
+    return prompts;
+  } catch (error) {
+    logger.error('Error fetching all prompts', {}, error instanceof Error ? error : undefined);
+    return {};
+  }
+}
+
+/**
+ * Save a draft version of a prompt (doesn't affect production)
+ */
+export async function savePromptDraft(promptId: string, draftContent: string, userId: string): Promise<void> {
+  const db = getAdminDb();
+  
+  try {
+    const promptRef = db.collection('prompts').doc(promptId);
+    const promptDoc = await promptRef.get();
+    
+    const updateData: Partial<PromptData> = {
+      draft: draftContent,
+      lastModified: new Date().toISOString(),
+      modifiedBy: userId,
+    };
+    
+    if (promptDoc.exists) {
+      await promptRef.update(updateData);
+    } else {
+      // First time saving this prompt - initialize with production version from file
+      const { getPrompt } = await import('./prompts');
+      await promptRef.set({
+        production: getPrompt(promptId as any),
+        draft: draftContent,
+        useDraft: false,
+        lastModified: new Date().toISOString(),
+        modifiedBy: userId,
+      });
+    }
+    
+    logger.info('Prompt draft saved', { promptId, userId });
+  } catch (error) {
+    logger.error('Error saving prompt draft', { promptId, userId }, error instanceof Error ? error : undefined);
+    throw error;
+  }
+}
+
+/**
+ * Activate draft mode (use draft instead of production)
+ */
+export async function activatePromptDraft(promptId: string): Promise<void> {
+  const db = getAdminDb();
+  
+  try {
+    await db.collection('prompts').doc(promptId).update({
+      useDraft: true,
+      lastModified: new Date().toISOString(),
+    });
+    
+    logger.info('Prompt draft activated', { promptId });
+  } catch (error) {
+    logger.error('Error activating prompt draft', { promptId }, error instanceof Error ? error : undefined);
+    throw error;
+  }
+}
+
+/**
+ * Deactivate draft mode (revert to production)
+ */
+export async function deactivatePromptDraft(promptId: string): Promise<void> {
+  const db = getAdminDb();
+  
+  try {
+    await db.collection('prompts').doc(promptId).update({
+      useDraft: false,
+      lastModified: new Date().toISOString(),
+    });
+    
+    logger.info('Prompt draft deactivated', { promptId });
+  } catch (error) {
+    logger.error('Error deactivating prompt draft', { promptId }, error instanceof Error ? error : undefined);
+    throw error;
+  }
+}
+
+/**
+ * Discard a draft (delete it from Firestore)
+ */
+export async function discardPromptDraft(promptId: string): Promise<void> {
+  const db = getAdminDb();
+  
+  try {
+    await db.collection('prompts').doc(promptId).update({
+      draft: null,
+      useDraft: false,
+      lastModified: new Date().toISOString(),
+    });
+    
+    logger.info('Prompt draft discarded', { promptId });
+  } catch (error) {
+    logger.error('Error discarding prompt draft', { promptId }, error instanceof Error ? error : undefined);
+    throw error;
+  }
+}
+
+/**
+ * Update production prompt (this is done after git commit)
+ */
+export async function updateProductionPrompt(promptId: string, newContent: string): Promise<void> {
+  const db = getAdminDb();
+  
+  try {
+    const promptRef = db.collection('prompts').doc(promptId);
+    const promptDoc = await promptRef.get();
+    
+    const updateData: Partial<PromptData> = {
+      production: newContent,
+      draft: null, // Clear draft after promoting to production
+      useDraft: false,
+      lastModified: new Date().toISOString(),
+    };
+    
+    if (promptDoc.exists) {
+      await promptRef.update(updateData);
+    } else {
+      await promptRef.set({
+        ...updateData,
+        production: newContent,
+        draft: null,
+        useDraft: false,
+        lastModified: new Date().toISOString(),
+      } as PromptData);
+    }
+    
+    logger.info('Production prompt updated', { promptId });
+  } catch (error) {
+    logger.error('Error updating production prompt', { promptId }, error instanceof Error ? error : undefined);
+    throw error;
+  }
+}
+

@@ -245,7 +245,7 @@ export default function ProfilePage() {
             />
             {isAdmin && (
               <button
-                onClick={() => router.push('/admin')}
+                onClick={() => router.push('/admin/prompts')}
                 className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-bold rounded-lg transition-all cursor-pointer shadow-md"
                 title="Admin Panel"
               >
