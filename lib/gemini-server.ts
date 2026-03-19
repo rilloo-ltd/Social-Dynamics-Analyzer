@@ -197,10 +197,10 @@ export async function serverAnalyzeChatFull(
 
   const chatContext = truncateChatForContext(chunkedMessages, limit);
 
-  const samplingNote = strategy === 'sampled' ? `
-  שים לב: אלו הם קטעים נבחרים משיחה ארוכה יותר המתמקדים ב-${targetUser}, לא את כל השיחה המלאה.
-  אבל אל תספר למשתמש על זה - תן ניתוח כאילו זו השיחה המלאה.
-  ` : '';
+  const samplingNoteTemplate = strategy === 'sampled' ? await getActivePrompt('samplingNoteIndividual') : '';
+  const samplingNote = samplingNoteTemplate
+    ? `\n  ${samplingNoteTemplate.replace(/\{\{TARGET_USER\}\}/g, targetUser)}\n  `
+    : '';
 
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
@@ -297,10 +297,8 @@ export async function serverAnalyzeGroupDynamics(
 
   const chatContext = truncateChatForContext(chunkedMessages, limit);
   
-  const samplingNote = strategy === 'sampled' ? `
-  שים לב: אלו הם קטעים נבחרים משיחה ארוכה יותר, לא את כל השיחה המלאה.
-  אבל אל תספר למשתמש על זה - תן ניתוח כאילו זו השיחה המלאה.
-  ` : '';
+  const samplingNoteTemplate = strategy === 'sampled' ? await getActivePrompt('samplingNoteGroup') : '';
+  const samplingNote = samplingNoteTemplate ? `\n  ${samplingNoteTemplate}\n  ` : '';
   
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
@@ -342,17 +340,26 @@ ${finalPrompt}
 export async function serverAnalyzeRomanticDynamics(
   messages: ChatMessage[],
   limit: number
-): Promise<string> {
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
-  const chatContext = truncateChatForContext(messages, limit);
+  // Apply smart chunking for large chats (> 50k words)
+  const chunkResult = createGroupAnalysisChunks(messages, 50000);
+  const chunkedMessages = chunkResult.chunks;
+  const strategy = chunkResult.strategy;
+  const originalWordCount = chunkResult.originalWordCount;
+
+  const chatContext = truncateChatForContext(chunkedMessages, limit);
+  
+  const samplingNoteTemplate = strategy === 'sampled' ? await getActivePrompt('samplingNoteGroup') : '';
+  const samplingNote = samplingNoteTemplate ? `\n  ${samplingNoteTemplate}\n  ` : '';
 
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
   const romanticAnalysisPrompt = await getActivePrompt('romanticDynamics');
 
   const prompt = `
-  ${systemInstruction}
+  ${systemInstruction}${samplingNote}
   
   <chat_history>
   ${chatContext}
@@ -366,7 +373,11 @@ export async function serverAnalyzeRomanticDynamics(
     contents: prompt
   });
   
-  return result.text || "";
+  return {
+    result: result.text || "",
+    strategy,
+    originalWordCount
+  };
 }
 
 export async function serverSummarizeForSharing(analysisText: string): Promise<string> {
@@ -400,9 +411,8 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
     location
   });
 
-  const fullPrompt = `3D animated cartoon style with expressive characters. ${prompt}. 
-High quality, vibrant colors, cute and friendly character design, colorful background, 
-cinematic lighting, professional 3D rendering, joyful atmosphere.`;
+  const enhancementTemplate = await getActivePrompt('imagePromptEnhancement');
+  const fullPrompt = enhancementTemplate.replace(/\{\{USER_PROMPT\}\}/g, prompt);
 
   // Configure credentials for local vs production
   let clientOptions: any = {
@@ -527,17 +537,10 @@ export async function serverGetVisualAssetData(
 ): Promise<VisualAssetData> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
-  const prompt = `
-Based on the following psychological analysis with the title "${title}", 
-create a visually appealing summary for a social media card.
-
-1. A short, catchy headline (max 5 words) in Hebrew.
-2. Exactly 3 short, impactful bullet points in Hebrew summarizing the key insights. Keep participant names as they appear.
-3. A detailed visual prompt for an image generator in English. The style should be "3D animated cartoon style" featuring friendly, expressive animals that represent the "vibe" of the analysis. Avoid mentioning copyrighted brands or franchises.
-
-Analysis:
-${analysisText}
-`;
+  const visualAssetPrompt = await getActivePrompt('visualAssetData');
+  const prompt = visualAssetPrompt
+    .replace(/\{\{TITLE\}\}/g, title)
+    .replace(/\{\{ANALYSIS_TEXT\}\}/g, analysisText);
 
   const result = await ai.models.generateContent({
     model: GEMINI_MODEL,

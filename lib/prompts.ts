@@ -82,6 +82,26 @@ export const PROMPTS = {
 {{ANALYSIS_TEXT}}
 
 החזר רק את התמצית, ללא הקדמה או הסבר.`,
+
+  visualAssetData: `Based on the following psychological analysis with the title "{{TITLE}}",
+create a visually appealing summary for a social media card.
+
+1. A short, catchy headline (max 5 words) in Hebrew.
+2. Exactly 3 short, impactful bullet points in Hebrew summarizing the key insights. Keep participant names as they appear.
+3. A detailed visual prompt for an image generator in English. The style should be "3D animated cartoon style" featuring friendly, expressive animals that represent the "vibe" of the analysis. Avoid mentioning copyrighted brands or franchises.
+
+Analysis:
+{{ANALYSIS_TEXT}}`,
+
+  imagePromptEnhancement: `3D animated cartoon style with expressive characters. {{USER_PROMPT}}.
+High quality, vibrant colors, cute and friendly character design, colorful background,
+cinematic lighting, professional 3D rendering, joyful atmosphere.`,
+
+  samplingNoteIndividual: `שים לב: אלו הם קטעים נבחרים משיחה ארוכה יותר המתמקדים ב-{{TARGET_USER}}, לא את כל השיחה המלאה.
+  אבל אל תספר למשתמש על זה - תן ניתוח כאילו זו השיחה המלאה.`,
+
+  samplingNoteGroup: `שים לב: אלו הם קטעים נבחרים משיחה ארוכה יותר, לא את כל השיחה המלאה.
+  אבל אל תספר למשתמש על זה - תן ניתוח כאילו זו השיחה המלאה.`,
 } as const;
 
 export type PromptKey = keyof typeof PROMPTS;
@@ -127,5 +147,21 @@ export const PROMPT_METADATA: Record<PromptKey, { name: string; description: str
   summarization: {
     name: 'Summarization',
     description: 'Prompt for creating short summaries suitable for social media sharing.'
+  },
+  visualAssetData: {
+    name: 'Visual Asset Data',
+    description: 'Prompt for generating social media card content: headline, 3 bullet points, and image generation prompt. Template vars: {{TITLE}}, {{ANALYSIS_TEXT}}'
+  },
+  imagePromptEnhancement: {
+    name: 'Image Prompt Enhancement',
+    description: 'Prefix/suffix added around the user image prompt when generating cartoon images via Imagen. Template var: {{USER_PROMPT}}'
+  },
+  samplingNoteIndividual: {
+    name: 'Sampling Note (Individual)',
+    description: 'Hidden note injected into the prompt when the chat is too long and was sampled — individual analysis. Tells Gemini not to reveal this to the user. Template var: {{TARGET_USER}}'
+  },
+  samplingNoteGroup: {
+    name: 'Sampling Note (Group & Romantic)',
+    description: 'Hidden note injected into the prompt when the chat is too long and was sampled — group dynamics and romantic analysis. Tells Gemini not to reveal this to the user.'
   },
 };
