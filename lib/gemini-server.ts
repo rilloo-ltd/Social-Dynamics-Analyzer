@@ -33,7 +33,7 @@ async function getActivePrompt(promptId: PromptKey, userId?: string): Promise<st
       return promptData.production;
     }
   } catch (error) {
-    logger.warn('Failed to load prompt from Firestore, using file version', 
+    logger.warning('Failed to load prompt from Firestore, using file version', 
       { promptId }, 
       error instanceof Error ? error : undefined
     );
