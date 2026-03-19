@@ -11,13 +11,8 @@ if (MIXPANEL_TOKEN) {
     track_pageview: false, // Manually track important pageviews only
     persistence: 'localStorage',
     ignore_dnt: true,
-    // Optimize autocapture to reduce event noise
-    autocapture: {
-      click: true, // Track clicks on buttons/links only
-      submit: true, // Track form submissions
-      change: false, // Disable input change tracking (too noisy)
-      pageview: false, // Manually control pageview tracking
-    },
+    // Reduce autocapture noise - only track major interactions
+    autocapture: false, // Disable autocapture, track events manually
     // Reduce session recording to 10% to avoid performance issues
     record_sessions_percent: 10,
     // Batch events to reduce requests
