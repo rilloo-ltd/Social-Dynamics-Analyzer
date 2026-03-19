@@ -129,7 +129,15 @@ const MarkdownRenderer = ({ text }: { text: string }) => {
     });
   };
 
-  const lines = text.split('\n');
+  // Normalize line endings, then split "**Header:** content on same line" into
+  // two separate lines so each renders as its own element with proper spacing.
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const preprocessed = normalized.replace(
+    /^(\*\*[^*\n]+\*\*:?)([ \t]+)([^\n])/gm,
+    '$1\n$3'
+  );
+
+  const lines = preprocessed.split('\n');
   const elements: React.ReactNode[] = [];
   let listItems: React.ReactNode[] = [];
 
@@ -158,14 +166,23 @@ const MarkdownRenderer = ({ text }: { text: string }) => {
     } else if (trimmed.startsWith('## ')) {
       flushList();
       elements.push(<h2 key={`h2-${i}`} className="text-2xl font-bold text-slate-800 mt-8 mb-4 border-b pb-2">{parseInline(trimmed.slice(3))}</h2>);
-    } 
-    else if (trimmed.startsWith('* ') || trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
-       const content = trimmed.replace(/^[\*\-\•]\s+/, '');
-       listItems.push(<li key={`li-${i}`} className="leading-relaxed pl-2">{parseInline(content)}</li>);
-    } 
-    else {
+    } else if (trimmed.startsWith('* ') || trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+      const content = trimmed.replace(/^[\*\-\•]\s+/, '');
+      listItems.push(<li key={`li-${i}`} className="leading-relaxed pl-2">{parseInline(content)}</li>);
+    } else {
       flushList();
-      elements.push(<p key={`p-${i}`} className="mb-4 leading-relaxed text-slate-700">{parseInline(trimmed)}</p>);
+      // A line that is ONLY a bold header (e.g. "**Title:**" with no body text)
+      // gets extra top margin to visually separate it from the previous section.
+      const isOnlyBoldHeader = /^\*\*[^*\n]+\*\*:?$/.test(trimmed);
+      if (isOnlyBoldHeader) {
+        elements.push(
+          <p key={`p-${i}`} className="mt-6 mb-1 leading-relaxed text-slate-700">{parseInline(trimmed)}</p>
+        );
+      } else {
+        elements.push(
+          <p key={`p-${i}`} className="mb-4 leading-relaxed text-slate-700">{parseInline(trimmed)}</p>
+        );
+      }
     }
   });
 

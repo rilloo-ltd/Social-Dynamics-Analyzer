@@ -3,7 +3,13 @@ import { checkDailyUploadLimit, incrementDailyUpload, getUserTier, ensureUserIni
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, action } = await req.json();
+    let body: { userId?: string; action?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid or missing JSON body' }, { status: 400 });
+    }
+    const { userId, action } = body;
 
     if (!userId) {
       return NextResponse.json({ error: 'User ID required' }, { status: 400 });

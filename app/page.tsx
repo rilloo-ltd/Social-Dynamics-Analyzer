@@ -572,7 +572,8 @@ export default function HomePage() {
               throw new Error(`Analysis failed: ${response.statusText}`);
             }
             
-            result = await response.text();
+            const responseData = await response.json();
+            result = responseData.result ?? responseData;
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
             // Persist to storage
             if (chatCode && authUser) {
