@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
     
     // Increase server action body size limit for large chat files
     serverActions: {
-      bodySizeLimit: '15mb', // Default is 1mb, increase for large ZIP files
+      bodySizeLimit: '500mb', // Increased to handle ~3MB text with serialization overhead
     },
   },
 

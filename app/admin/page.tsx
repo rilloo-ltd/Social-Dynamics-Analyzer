@@ -44,10 +44,7 @@ export default function AdminPage() {
     setIsLoggingIn(true);
     
     try {
-      console.log('Attempting login...');
       const result = await verifyAdminPasswordAction(password);
-      
-      console.log('Login result:', result);
       
       if (result.success) {
         setIsAuthenticated(true);

@@ -54,9 +54,11 @@ const truncateChatForContext = (messages: ChatMessage[], limit = 20000): string 
 
   for (const m of sourceMessages) {
     if (!m.content.trim()) continue;
-    const dateStr = m.date.getDate().toString().padStart(2, '0') + '/' + 
-                    (m.date.getMonth() + 1).toString().padStart(2, '0') + '/' + 
-                    m.date.getFullYear();
+    // Convert date to Date object in case it's a string/number from API serialization
+    const dateObj = m.date instanceof Date ? m.date : new Date(m.date);
+    const dateStr = dateObj.getDate().toString().padStart(2, '0') + '/' + 
+                    (dateObj.getMonth() + 1).toString().padStart(2, '0') + '/' + 
+                    dateObj.getFullYear();
     if (dateStr !== lastDateStr) {
         fullText += `\n[${dateStr}]\n`;
         lastDateStr = dateStr;

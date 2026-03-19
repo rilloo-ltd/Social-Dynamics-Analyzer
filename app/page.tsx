@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { FileUpload } from '@/components/FileUpload';
 import { parseChatFile } from '@/services/chatParser';
 import { ChatMessage, ParsedChat, AnalysisType, CardColor, UserTier } from '@/types';
-import { serverAnalyzeChatFull, serverAnalyzeGroupDynamics, serverAnalyzeRomanticDynamics } from '@/lib/gemini-server';
 import { createFullAnalysisCacheKey, createGroupDynamicsCacheKey } from '@/lib/cache-utils';
 import { getChatMetadata, getTruncatedMessages } from '@/lib/chat-utils';
 import { uploadChatAction, updateChatCacheAction, loadCachedOutputsAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
@@ -92,11 +91,6 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    console.log('showPromoCodeModal changed:', showPromoCodeModal);
-    console.log('authUser:', authUser?.email);
-  }, [showPromoCodeModal, authUser]);
-
-  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setAuthUser(user);
       setAuthChecking(false);
@@ -117,15 +111,12 @@ export default function HomePage() {
         
         // Check user's tier for analysis limits
         checkUnlimitedAccessAction(user.uid).then(result => {
-          console.log('User tier check:', result);
           if (result.hasUnlimited) {
             // User has unlimited access via promo code
             setSelectedTier('super');
-            console.log('User has unlimited access - set tier to super');
           } else if (result.tier) {
             // Set tier based on their actual tier from Firestore
             setSelectedTier(result.tier as UserTier);
-            console.log('User tier set to:', result.tier);
           }
         }).catch(err => {
           console.error('Error checking user tier:', err);
@@ -212,11 +203,7 @@ export default function HomePage() {
   };
 
   const handleOpenPromoCodeModal = () => {
-    console.log('handleOpenPromoCodeModal called');
-    console.log('Current authUser:', authUser?.email);
-    console.log('Current showPromoCodeModal:', showPromoCodeModal);
     setShowPromoCodeModal(true);
-    console.log('setShowPromoCodeModal(true) called');
   };
 
   const refreshUserTier = async () => {
@@ -224,13 +211,10 @@ export default function HomePage() {
     
     try {
       const result = await checkUnlimitedAccessAction(authUser.uid);
-      console.log('Tier refreshed:', result);
       if (result.hasUnlimited) {
         setSelectedTier('super');
-        console.log('Tier upgraded to super (unlimited access)');
       } else if (result.tier) {
         setSelectedTier(result.tier as UserTier);
-        console.log('Tier set to:', result.tier);
       }
     } catch (err) {
       console.error('Error refreshing user tier:', err);
@@ -281,14 +265,11 @@ export default function HomePage() {
         // Always reset cached outputs first to ensure state is clean
         setCachedOutputs({});
         setChatCode(data.code);
-        console.log("Chat stored with code:", data.code);
         
         // Load existing outputs separately if they exist
         if (data.hasExistingOutputs && !isNewSessionMode) {
-          console.log("Loading existing outputs...");
           loadCachedOutputsAction(authUser.uid, data.code).then(result => {
             if (result.success && result.outputs) {
-              console.log("Loaded existing outputs:", Object.keys(result.outputs));
               // Wrap outputs in expected format { output, timestamp }
               const wrappedOutputs: any = {};
               for (const [key, value] of Object.entries(result.outputs)) {
@@ -342,7 +323,6 @@ export default function HomePage() {
           const checkData = await checkResponse.json();
           
           if (!checkData.canUpload) {
-            console.log('Upload limit reached', checkData);
             alert('הגעת למגבלה היומית של העלאות. השתמש בקוד חברים (לחץ על כפתור המתנה 🎁) לקבלת גישה בלתי מוגבלת!');
             return;
           }
@@ -394,11 +374,9 @@ export default function HomePage() {
       }).join('\n');
 
       // No truncation - analyze full chat history for all users
-      console.log(`[App] Processing full chat history - ${formattedAnonymizedText.length} characters`);
 
       // Calculate token count based on character count / 4
       const estimatedTokens = Math.ceil(formattedAnonymizedText.length / 4);
-      console.log(`[App] Uploading text length: ${formattedAnonymizedText.length}, Estimated Tokens: ${estimatedTokens}`);
 
       // Store chat and log upload only for authenticated users
       let code = null;
@@ -506,12 +484,25 @@ export default function HomePage() {
         let originalWordCount: number | undefined;
         
         if (!bypassCache && cachedOutputs[cacheKey]) {
-            console.log("Using cached group dynamics analysis");
             result = cachedOutputs[cacheKey].output;
             strategy = cachedOutputs[cacheKey].strategy;
             originalWordCount = cachedOutputs[cacheKey].originalWordCount;
         } else {
-            const analysisResult = await serverAnalyzeGroupDynamics(chatData.anonymizedMessages, participants, limit);
+            const response = await fetch('/api/analyze-group-dynamics', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: chatData.anonymizedMessages,
+                selectedParticipants: participants,
+                limit
+              })
+            });
+            
+            if (!response.ok) {
+              throw new Error(`Analysis failed: ${response.statusText}`);
+            }
+            
+            const analysisResult = await response.json();
             result = analysisResult.result;
             strategy = analysisResult.strategy;
             originalWordCount = analysisResult.originalWordCount;
@@ -566,10 +557,22 @@ export default function HomePage() {
         const cacheKey = 'romantic_dynamics';
         let result = "";
         if (!bypassCache && cachedOutputs[cacheKey]) {
-            console.log("Using cached romantic dynamics analysis");
             result = cachedOutputs[cacheKey].output;
         } else {
-            result = await serverAnalyzeRomanticDynamics(chatData.anonymizedMessages, limit);
+            const response = await fetch('/api/analyze-romantic-dynamics', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: chatData.anonymizedMessages,
+                limit
+              })
+            });
+            
+            if (!response.ok) {
+              throw new Error(`Analysis failed: ${response.statusText}`);
+            }
+            
+            result = await response.text();
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
             // Persist to storage
             if (chatCode && authUser) {
@@ -630,12 +633,25 @@ export default function HomePage() {
       let originalWordCount: number | undefined;
 
       if (!bypassCache && cachedOutputs[cacheKey]) {
-          console.log(`Using cached full analysis for ${anonUser}`);
           rawResult = cachedOutputs[cacheKey].output;
           strategy = cachedOutputs[cacheKey].strategy;
           originalWordCount = cachedOutputs[cacheKey].originalWordCount;
       } else {
-          const analysisResult = await serverAnalyzeChatFull(chatData.anonymizedMessages, anonUser, limit);
+          const response = await fetch('/api/analyze-chat-full', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              messages: chatData.anonymizedMessages,
+              targetUser: anonUser,
+              limit
+            })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Analysis failed: ${response.statusText}`);
+          }
+          
+          const analysisResult = await response.json();
           rawResult = {
             personality: analysisResult.personality,
             othersThoughts: analysisResult.othersThoughts,
@@ -1189,12 +1205,10 @@ export default function HomePage() {
           <PromoCodeModal
             isOpen={showPromoCodeModal}
             onClose={() => {
-              console.log('Closing promo modal');
               setShowPromoCodeModal(false);
             }}
             userId={authUser.uid}
             onSuccess={async () => {
-              console.log('Promo code redeemed successfully');
               setShowPromoCodeModal(false);
               // Refresh user tier immediately
               await refreshUserTier();
@@ -1407,12 +1421,10 @@ export default function HomePage() {
         <PromoCodeModal
           isOpen={showPromoCodeModal}
           onClose={() => {
-            console.log('Closing promo modal');
             setShowPromoCodeModal(false);
           }}
           userId={authUser.uid}
           onSuccess={async () => {
-            console.log('Promo code redeemed successfully');
             setShowPromoCodeModal(false);
             // Refresh user tier immediately
             await refreshUserTier();

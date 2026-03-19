@@ -147,11 +147,15 @@ export const groupMessagesByDate = (messages: ChatMessage[]): Map<string, ChatMe
 
 /**
  * Format date as YYYY-MM-DD
+ * Handles Date objects, timestamp numbers, and ISO strings
  */
-const formatDateKey = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+const formatDateKey = (date: Date | string | number): string => {
+  // Convert to Date object if it's a string or number
+  const dateObj = date instanceof Date ? date : new Date(date);
+  
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
 

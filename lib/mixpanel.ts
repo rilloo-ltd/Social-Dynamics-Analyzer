@@ -7,11 +7,23 @@ const MIXPANEL_TOKEN = process.env.NEXT_PUBLIC_MIXPANEL_TOKEN;
 
 if (MIXPANEL_TOKEN) {
   mixpanel.init(MIXPANEL_TOKEN, {
-    debug: process.env.NODE_ENV === 'development',
-    track_pageview: true,
+    debug: false, // Disable debug logs in console
+    track_pageview: false, // Manually track important pageviews only
     persistence: 'localStorage',
-    autocapture: true, // Automatically track clicks, form submissions, and page views
-    record_sessions_percent: 100, // Record 100% of user sessions for replay
+    ignore_dnt: true,
+    // Optimize autocapture to reduce event noise
+    autocapture: {
+      click: true, // Track clicks on buttons/links only
+      submit: true, // Track form submissions
+      change: false, // Disable input change tracking (too noisy)
+      pageview: false, // Manually control pageview tracking
+    },
+    // Reduce session recording to 10% to avoid performance issues
+    record_sessions_percent: 10,
+    // Batch events to reduce requests
+    batch_requests: true,
+    batch_size: 50,
+    batch_flush_interval_ms: 5000,
     api_host: 'https://api-eu.mixpanel.com', // EU data residency endpoint
   });
 }

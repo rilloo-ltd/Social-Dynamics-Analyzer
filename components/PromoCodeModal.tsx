@@ -15,8 +15,6 @@ export default function PromoCodeModal({ isOpen, onClose, userId, onSuccess }: P
   const [promoCode, setPromoCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-
-  console.log('PromoCodeModal render - isOpen:', isOpen, 'userId:', userId);
   
   if (!isOpen) return null;
 

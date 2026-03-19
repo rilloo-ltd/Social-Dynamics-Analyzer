@@ -40,7 +40,6 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
           currentSize += lineSize;
         }
         
-        console.log(`[FileUpload] File truncated: ${(textSizeBytes / 1024 / 1024).toFixed(2)}MB -> ${(currentSize / 1024 / 1024).toFixed(2)}MB (kept recent messages)`);
         return keptText;
       };
 
