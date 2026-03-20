@@ -10,6 +10,7 @@ import {
   updateProductionPrompt,
 } from '@/lib/firestore-admin';
 import { getPromptKeys, getPrompt, PROMPT_METADATA } from '@/lib/prompts';
+import { getFileFromGitHub, commitFileToGitHub, replacePromptInSource } from '@/lib/github';
 import type { PromptKey } from '@/lib/prompts';
 
 // Admin password verification
@@ -194,14 +195,16 @@ export async function discardDraftAction(
 }
 
 /**
- * Commit and deploy a prompt - this will update the production file and trigger deployment
- * NOTE: In Phase 3, this will also commit to GitHub and trigger auto-deployment
+ * Commit and deploy a prompt:
+ *  1. Promote the draft to production in Firestore (immediate effect, no redeploy needed)
+ *  2. Update lib/prompts.ts in GitHub so the file-based fallback stays in sync
+ *     → Firebase App Hosting detects the push and auto-redeploys
  */
 export async function commitPromptAction(
   adminPassword: string,
   promptId: string,
   commitMessage?: string
-): Promise<{ success: boolean; error?: string; commitSha?: string }> {
+): Promise<{ success: boolean; error?: string; commitSha?: string; commitUrl?: string }> {
   // Verify admin
   if (!isAdminUser(adminPassword)) {
     return { success: false, error: 'Unauthorized' };
@@ -220,25 +223,24 @@ export async function commitPromptAction(
   }
 
   try {
-    // Update production in Firestore
+    // Step 1: Promote draft → production in Firestore (users see the change immediately)
     await updateProductionPrompt(promptId, promptData.draft);
-    
-    // TODO: Phase 3 - Commit to GitHub
-    // This will:
-    // 1. Update lib/prompts.ts file content
-    // 2. Create a commit with the commit message
-    // 3. Push to main branch
-    // 4. Firebase App Hosting will auto-deploy
-    
-    // For now, just update Firestore
-    // The file-based version in lib/prompts.ts will need manual update
-    
-    return { 
-      success: true,
-      // commitSha will be returned in Phase 3
-    };
+
+    // Step 2: Patch lib/prompts.ts in GitHub so the file stays in sync with Firestore
+    const { content: currentSource, sha: currentSha } = await getFileFromGitHub('lib/prompts.ts');
+    const updatedSource = replacePromptInSource(currentSource, promptId, promptData.draft);
+
+    const msg = commitMessage || `chore: update prompt "${promptId}" via admin panel`;
+    const { commitSha, commitUrl } = await commitFileToGitHub(
+      'lib/prompts.ts',
+      updatedSource,
+      currentSha,
+      msg
+    );
+
+    return { success: true, commitSha, commitUrl };
   } catch (error) {
     console.error('Error committing prompt:', error);
-    return { success: false, error: 'Failed to commit prompt' };
+    return { success: false, error: error instanceof Error ? error.message : 'Failed to commit prompt' };
   }
 }

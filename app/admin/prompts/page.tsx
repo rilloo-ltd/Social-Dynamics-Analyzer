@@ -37,7 +37,7 @@ export default function PromptsAdminPage() {
   const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
   const [editedContent, setEditedContent] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
-  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string; commitUrl?: string } | null>(null);
   const [showCommitWarning, setShowCommitWarning] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -195,11 +195,18 @@ export default function PromptsAdminPage() {
     setActionMessage(null);
 
     try {
-      const result = await commitPromptAction(storedPassword, selectedPrompt, 'Update prompt via admin panel');
+      const result = await commitPromptAction(
+        storedPassword,
+        selectedPrompt,
+        `chore: update prompt "${selectedPrompt}" via admin panel`
+      );
       if (result.success) {
         setActionMessage({
           type: 'success',
-          text: 'Prompt committed to Firestore! Note: Git integration coming in Phase 3.',
+          text: result.commitSha
+            ? `✅ Committed to GitHub (${result.commitSha.slice(0, 7)}) — Firebase will auto-deploy shortly.`
+            : '✅ Promoted to production in Firestore.',
+          commitUrl: result.commitUrl,
         });
         await fetchPrompts(storedPassword);
       } else {
@@ -358,6 +365,16 @@ export default function PromptsAdminPage() {
                       }`}
                     >
                       {actionMessage.text}
+                      {actionMessage.commitUrl && (
+                        <a
+                          href={actionMessage.commitUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-2 underline font-mono text-sm"
+                        >
+                          View on GitHub →
+                        </a>
+                      )}
                     </div>
                   )}
                 </div>
@@ -427,23 +444,21 @@ export default function PromptsAdminPage() {
                 {showCommitWarning && (
                   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div className="bg-white p-6 rounded-lg shadow-lg max-w-md">
-                      <h3 className="text-xl font-bold mb-4">Confirm Deployment</h3>
+                      <h3 className="text-xl font-bold mb-4">🚀 Confirm Deployment</h3>
                       <p className="mb-4">
-                        Are you sure you want to commit this prompt to production? This will:
+                        Are you sure you want to commit <strong>{selectedPromptData?.name}</strong> to production?
                       </p>
-                      <ul className="list-disc ml-5 mb-4 space-y-1">
-                        <li>Update the production prompt in Firestore</li>
-                        <li>Clear the draft version</li>
-                        <li>
-                          <strong>Note:</strong> Git commit/push will be added in Phase 3
-                        </li>
+                      <ul className="list-disc ml-5 mb-4 space-y-1 text-sm">
+                        <li>Promote draft → production in Firestore <span className="text-green-700 font-medium">(takes effect immediately)</span></li>
+                        <li>Commit updated <code className="bg-gray-100 px-1 rounded">lib/prompts.ts</code> to GitHub</li>
+                        <li>Firebase App Hosting will auto-redeploy from the new commit</li>
                       </ul>
                       <div className="flex gap-3">
                         <button
                           onClick={handleCommit}
                           className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 cursor-pointer"
                         >
-                          Yes, Commit
+                          Yes, Commit & Deploy
                         </button>
                         <button
                           onClick={() => setShowCommitWarning(false)}
@@ -460,22 +475,11 @@ export default function PromptsAdminPage() {
                 <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded">
                   <h3 className="font-bold mb-2">💡 How it works:</h3>
                   <ul className="text-sm space-y-1">
-                    <li>
-                      <strong>Save Draft:</strong> Save changes without affecting users
-                    </li>
-                    <li>
-                      <strong>Test Draft:</strong> Use draft for analyses (only visible to you)
-                    </li>
-                    <li>
-                      <strong>Stop Testing:</strong> Return to production version
-                    </li>
-                    <li>
-                      <strong>Discard Draft:</strong> Delete draft and revert to production
-                    </li>
-                    <li>
-                      <strong>Commit & Deploy:</strong> Promote draft to production (Phase 3 will add Git
-                      integration)
-                    </li>
+                    <li><strong>Save Draft:</strong> Save changes without affecting users</li>
+                    <li><strong>Test Draft:</strong> Use draft for analyses (only you see it)</li>
+                    <li><strong>Stop Testing:</strong> Return to production version</li>
+                    <li><strong>Discard Draft:</strong> Delete draft and revert to production</li>
+                    <li><strong>Commit &amp; Deploy:</strong> Promotes draft to Firestore production (immediate) + commits <code className="bg-blue-100 px-1 rounded">lib/prompts.ts</code> to GitHub → triggers Firebase auto-redeploy</li>
                   </ul>
                 </div>
               </>
