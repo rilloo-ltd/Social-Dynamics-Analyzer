@@ -37,3 +37,13 @@ env:
   # PayPal API URL
   - variable: PAYPAL_API_URL
     secret: PAYPAL_API_URL
+
+  # GitHub integration for admin prompt Commit & Deploy
+  - variable: GITHUB_TOKEN
+    secret: GITHUB_TOKEN
+
+  - variable: GITHUB_REPO_OWNER
+    secret: GITHUB_REPO_OWNER
+
+  - variable: GITHUB_REPO_NAME
+    secret: GITHUB_REPO_NAME
