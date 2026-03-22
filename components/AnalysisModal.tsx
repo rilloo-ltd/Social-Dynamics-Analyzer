@@ -1,9 +1,16 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
+import { toBlob } from 'html-to-image';
 import { CardColor, AnalysisType } from '../types';
 import { serverSummarizeForSharing, serverGetVisualAssetData, serverGenerateCartoonImage, VisualAssetData } from '@/lib/gemini-server';
 import { updateChatCacheAction } from '@/app/actions/analytics-actions';
+import {
+  ParticipantAxisSharePoster,
+  ParticipantAxisVisualizer,
+  ParticipantAxisVisualKey,
+  ParticipantAxisVisualParticipant,
+} from './ParticipantAxisVisualizer';
 
 interface AnalysisModalProps {
   isOpen: boolean;
@@ -195,6 +202,80 @@ const MarkdownRenderer = ({ text }: { text: string }) => {
   );
 };
 
+const PARTICIPANT_AXIS_SECTION_MARKER = '**מפת הצירים של המשתתפים**';
+
+const PARTICIPANT_AXIS_LABEL_MAP: Record<string, ParticipantAxisVisualKey> = {
+  ליברליזם: 'liberalism',
+  רוגע: 'calmness',
+  רציונליות: 'rationalism',
+  הומור: 'humor',
+};
+
+const PARTICIPANT_AXIS_RENDER_ORDER: ParticipantAxisVisualKey[] = ['liberalism', 'calmness', 'rationalism', 'humor'];
+
+const extractParticipantAxisVisualization = (
+  text: string
+): {
+  bodyText: string;
+  participants: ParticipantAxisVisualParticipant[];
+} => {
+  if (!text || !text.includes(PARTICIPANT_AXIS_SECTION_MARKER)) {
+    return { bodyText: text, participants: [] };
+  }
+
+  const sectionMarkerIndex = text.indexOf(PARTICIPANT_AXIS_SECTION_MARKER);
+  const bodyText = text.slice(0, sectionMarkerIndex).trimEnd();
+  const sectionText = text.slice(sectionMarkerIndex + PARTICIPANT_AXIS_SECTION_MARKER.length).trim();
+
+  const participantBlockMatches = sectionText.matchAll(/\*\*([^*\n]+)\*\*\s*([\s\S]*?)(?=(?:\n\s*\*\*[^*\n]+\*\*)|$)/g);
+  const participants: ParticipantAxisVisualParticipant[] = [];
+
+  for (const match of participantBlockMatches) {
+    const participantName = match[1]?.trim();
+    const blockContent = match[2] || '';
+
+    if (!participantName) {
+      continue;
+    }
+
+    const metrics = Array.from(
+      blockContent.matchAll(/-\s*דירוג ה(.+?) הוא (\d+) מתוך 10\.\s*([^\n]+)/g)
+    )
+      .map((metricMatch) => {
+        const rawLabel = metricMatch[1]?.trim();
+        const axisKey = rawLabel ? PARTICIPANT_AXIS_LABEL_MAP[rawLabel] : undefined;
+        const score = Number(metricMatch[2]);
+        const comparison = metricMatch[3]?.trim() || '';
+
+        if (!axisKey || Number.isNaN(score)) {
+          return null;
+        }
+
+        return {
+          axisKey,
+          label: rawLabel,
+          score,
+          comparison,
+        };
+      })
+      .filter((metric): metric is ParticipantAxisVisualParticipant['metrics'][number] => Boolean(metric))
+      .sort((a, b) => PARTICIPANT_AXIS_RENDER_ORDER.indexOf(a.axisKey) - PARTICIPANT_AXIS_RENDER_ORDER.indexOf(b.axisKey));
+
+    if (metrics.length > 0) {
+      participants.push({
+        participantName,
+        metrics,
+      });
+    }
+  }
+
+  if (!participants.length) {
+    return { bodyText: text, participants: [] };
+  }
+
+  return { bodyText, participants };
+};
+
 export const AnalysisModal: React.FC<AnalysisModalProps> = ({ 
   isOpen, onClose, title, icon, content, loading, loadingHighlight, loadingMessage, color, onShare, onLogImageGeneration, onLogFeedback, onRegenerate, analysisType, chatCode, userId 
 }) => {
@@ -202,12 +283,14 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   const [shareHubState, setShareHubState] = useState<'closed' | 'version' | 'platform' | 'visual_preview'>('closed');
   const [selectedShareText, setSelectedShareText] = useState('');
   const [isSummarizing, setIsSummarizing] = useState(false);
-  const [showCopiedTooltip, setShowCopiedTooltip] = useState(false);
+  const [copiedTarget, setCopiedTarget] = useState<'text' | 'visuals' | 'cartoon' | null>(null);
   const [visualData, setVisualData] = useState<VisualAssetData | null>(null);
   const [visualAssetUrl, setVisualAssetUrl] = useState<string | null>(null);
   const [composedImageUrl, setComposedImageUrl] = useState<string | null>(null);
   const [copyingImage, setCopyingImage] = useState(false);
+  const [copyingVisuals, setCopyingVisuals] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const shareVisualsRef = useRef<HTMLDivElement>(null);
 
   const [feedbackRating, setFeedbackRating] = useState<number | null>(null);
   const [feedbackComment, setFeedbackComment] = useState('');
@@ -215,8 +298,20 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
 
   const displayContent = content?.replace(/^\[PRIVACY_NOTICE\].*\n\n/, "") || "";
   const privacyNoticeText = content?.match(/^\[PRIVACY_NOTICE\] (.*)\n\n/)?.[1] || "";
+  const participantAxisVisualization = analysisType === AnalysisType.GROUP_DYNAMICS
+    ? extractParticipantAxisVisualization(displayContent)
+    : { bodyText: displayContent, participants: [] };
+  const renderedBodyContent = participantAxisVisualization.bodyText || displayContent;
+  const hasShareableVisuals = participantAxisVisualization.participants.length > 0;
   
   const showLoading = loading || !displayContent;
+
+  const showCopiedFeedback = (target: 'text' | 'visuals' | 'cartoon') => {
+    setCopiedTarget(target);
+    window.setTimeout(() => {
+      setCopiedTarget((current) => (current === target ? null : current));
+    }, 2000);
+  };
 
   useEffect(() => {
     if (isOpen) document.body.style.overflow = 'hidden';
@@ -225,6 +320,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
       setShareHubState('closed');
       setVisualAssetUrl(null);
       setComposedImageUrl(null);
+      setCopiedTarget(null);
       setFeedbackRating(null);
       setFeedbackComment('');
       setFeedbackSubmitted(false);
@@ -247,9 +343,8 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
 
   const handleCopyText = async (text: string) => {
     await navigator.clipboard.writeText(text);
-    setShowCopiedTooltip(true);
     if (onShare) onShare('clipboard');
-    setTimeout(() => setShowCopiedTooltip(false), 2000);
+    showCopiedFeedback('text');
   };
 
   const handleSocialShare = (platform: 'whatsapp' | 'telegram' | 'facebook' | 'linkedin') => {
@@ -289,15 +384,47 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
       if (blob) {
         const item = new ClipboardItem({ 'image/png': blob });
         await navigator.clipboard.write([item]);
-        setShowCopiedTooltip(true);
+        showCopiedFeedback('cartoon');
         if (onShare) onShare('image_clipboard');
-        setTimeout(() => setShowCopiedTooltip(false), 2000);
       }
     } catch (err) {
       console.error('Failed to copy image:', err);
       alert('לא ניתן היה להעתיק את התמונה אוטומטית. נסה להוריד אותה במקום.');
     } finally {
       setCopyingImage(false);
+    }
+  };
+
+  const handleCopyVisualsToClipboard = async () => {
+    if (!shareVisualsRef.current) return;
+
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      alert('×”×“×¤×“×¤×Ÿ ×”× ×•×›×—×™ ×œ× ×ª×•×ž×š ×‘×”×¢×ª×§×ª ×ª×ž×•× ×•×ª ×œ×œ×•×—.');
+      return;
+    }
+
+    setCopyingVisuals(true);
+    try {
+      const blob = await toBlob(shareVisualsRef.current, {
+        backgroundColor: '#f8fafc',
+        cacheBust: true,
+        pixelRatio: 3,
+        skipAutoScale: true,
+      });
+
+      if (!blob) {
+        throw new Error('Failed to render visuals as image.');
+      }
+
+      const item = new ClipboardItem({ 'image/png': blob });
+      await navigator.clipboard.write([item]);
+      if (onShare) onShare('visuals_clipboard');
+      showCopiedFeedback('visuals');
+    } catch (err) {
+      console.error('Failed to copy visuals:', err);
+      alert('×œ× × ×™×ª×Ÿ ×”×™×” ×œ×”×¢×ª×™×§ ××ª ×”×•×•×™×–×•××œ×™× ××ª×ž×•× ×”. × ×¡×• ×©×•×‘ ×¢×•×“ ×¨×’×¢.');
+    } finally {
+      setCopyingVisuals(false);
     }
   };
 
@@ -486,7 +613,10 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                    <img src={LOGO_URL} className="w-20 h-20 opacity-90 object-contain rounded-full" alt="Logo" />
                 </div>
                 {privacyNoticeText && <PrivacyNotice text={privacyNoticeText} />}
-                <MarkdownRenderer text={displayContent} />
+                <MarkdownRenderer text={renderedBodyContent} />
+                {participantAxisVisualization.participants.length > 0 && (
+                  <ParticipantAxisVisualizer participants={participantAxisVisualization.participants} />
+                )}
                 
                 {/* Feedback Section */}
                 {!feedbackSubmitted ? (
@@ -631,7 +761,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                          >
                             {copyingImage && <div className="absolute inset-0 bg-indigo-900/40 animate-pulse" />}
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                            <span>{showCopiedTooltip ? 'הועתק!' : 'העתק תמונה'}</span>
+                            <span>{copiedTarget === 'cartoon' ? 'הועתק!' : 'העתק תמונה'}</span>
                          </button>
                          <button 
                             onClick={() => { if(canvasRef.current) { const link = document.createElement('a'); link.download = 'psychologist_card.png'; link.href = canvasRef.current.toDataURL(); link.click(); } }} 
@@ -648,11 +778,27 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
               <div className="w-full max-w-lg space-y-6 text-center">
                   <h3 className="text-2xl font-black text-slate-800">שתף את הניתוח</h3>
                   
-                  {/* Copy Button */}
-                  <button onClick={() => handleCopyText(selectedShareText)} className="w-full py-5 rounded-3xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-lg relative flex items-center justify-center gap-3 transition-colors border border-slate-200 cursor-pointer">
-                    <CopyIcon />
-                    {showCopiedTooltip ? "הועתק ללוח!" : "העתק טקסט ללוח"}
-                  </button>
+                  <div className={`grid gap-3 ${hasShareableVisuals ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+                    <button onClick={() => handleCopyText(selectedShareText)} className="w-full py-5 rounded-3xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-lg relative flex items-center justify-center gap-3 transition-colors border border-slate-200 cursor-pointer">
+                      <CopyIcon />
+                      {copiedTarget === 'text' ? "הועתק ללוח!" : "העתק טקסט ללוח"}
+                    </button>
+
+                    {hasShareableVisuals && (
+                      <button
+                        onClick={handleCopyVisualsToClipboard}
+                        disabled={copyingVisuals}
+                        className="w-full py-5 rounded-3xl bg-gradient-to-r from-sky-500 to-indigo-600 text-white font-bold text-lg relative flex items-center justify-center gap-3 transition-all shadow-lg shadow-sky-200/70 hover:from-sky-600 hover:to-indigo-700 disabled:cursor-not-allowed disabled:opacity-70 cursor-pointer"
+                      >
+                        {copyingVisuals && <div className="absolute inset-0 rounded-3xl bg-slate-900/10 animate-pulse" />}
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 16l5-5 4 4 8-8 1 1v10a2 2 0 01-2 2H5a2 2 0 01-2-2v-2z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h.01M7 4h10a2 2 0 012 2v10" />
+                        </svg>
+                        <span>{copiedTarget === 'visuals' ? 'הועתק כתמונה!' : 'העתק תמונת הוויזואלים'}</span>
+                      </button>
+                    )}
+                  </div>
 
                   <div className="grid grid-cols-2 gap-4">
                      <button onClick={() => handleSocialShare('whatsapp')} className="p-4 rounded-2xl bg-[#25D366] text-white flex flex-col items-center justify-center gap-2 hover:bg-[#20bd5a] transition-colors shadow-sm cursor-pointer">
@@ -683,6 +829,13 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
           </div>
         )}
       </div>
+      {hasShareableVisuals && (
+        <div className="pointer-events-none fixed left-[-10000px] top-0" aria-hidden="true">
+          <div ref={shareVisualsRef}>
+            <ParticipantAxisSharePoster participants={participantAxisVisualization.participants} />
+          </div>
+        </div>
+      )}
       <style>{`
         @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }

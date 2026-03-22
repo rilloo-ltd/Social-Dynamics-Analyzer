@@ -1,17 +1,448 @@
 'use server';
 
 import 'server-only';
+import { existsSync, readFileSync } from 'fs';
+import path from 'path';
 import { GoogleGenAI, Type } from "@google/genai";
-import { ChatMessage, ChunkingStrategy } from "@/types";
+import {
+  AnalysisDepthMode,
+  ChatMessage,
+  ChatRecordSection,
+  ChunkingStrategy,
+  ParticipantAxisDistributionSummary,
+  ParticipantAxisKey,
+  ParticipantAxisScore,
+  UserTier
+} from "@/types";
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { PredictionServiceClient, helpers } from '@google-cloud/aiplatform';
 import { logger } from './logger';
-import { createGroupAnalysisChunks, createIndividualAnalysisChunks, getTotalWordCount } from './chat-utils';
+import {
+  createGroupAnalysisChunks,
+  createGroupAnalysisChunksByTokens,
+  createIndividualAnalysisChunks,
+  createIndividualAnalysisChunksByTokens,
+  formatChatDate,
+  getTotalTokenCount,
+  getTotalWordCount
+} from './chat-utils';
 import { getPrompt, type PromptKey } from './prompts';
-import { getPromptData } from './firestore-admin';
+import {
+  getParticipantAxisDistributionSummary,
+  getPromptData,
+  recordParticipantAxisScores
+} from './firestore-admin';
 
-// Gemini model configuration - change here to update all analyses
-const GEMINI_MODEL = "gemini-3-flash-preview";
+// Analysis model configuration by tier.
+// Google documents the Pro preview model ID as "gemini-3-pro-preview".
+const FREE_ANALYSIS_MODEL = "gemini-3-flash-preview";
+const PAID_ANALYSIS_MODEL = "gemini-3-pro-preview";
+const UTILITY_GEMINI_MODEL = FREE_ANALYSIS_MODEL;
+const ASK_AUNT_MODEL = FREE_ANALYSIS_MODEL;
+const FREE_ANALYSIS_MAX_WORDS = 50000;
+const PAID_ANALYSIS_MAX_TOKENS = 200000;
+const ASK_AUNT_MAX_WORDS = 50000;
+const ASK_AUNT_MAX_QUESTION_CHARS = 500;
+
+const ASK_AUNT_PROMPT_INJECTION_PATTERNS = [
+  /\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|system|developer|instructions?)\b/i,
+  /\b(system prompt|developer message|hidden prompt|prompt injection|jailbreak)\b/i,
+  /<\s*(system|assistant|developer|tool)\b/i,
+  /\b(reveal|print|show|dump)\b.{0,40}\b(prompt|instructions?|chain of thought)\b/i,
+];
+
+const PARTICIPANT_AXIS_KEYS: ParticipantAxisKey[] = ['liberalism', 'calmness', 'rationalism', 'humor'];
+const PARTICIPANT_AXIS_MIN = 1;
+const PARTICIPANT_AXIS_MAX = 10;
+const PARTICIPANT_AXIS_MIDPOINT = 5.5;
+
+const PARTICIPANT_AXIS_META: Record<
+  ParticipantAxisKey,
+  {
+    scoreLabel: string;
+    lowTraitComparison: string;
+    highTraitComparison: string;
+  }
+> = {
+  liberalism: {
+    scoreLabel: 'ליברליזם',
+    lowTraitComparison: 'שמרני יותר',
+    highTraitComparison: 'ליברלי יותר',
+  },
+  calmness: {
+    scoreLabel: 'רוגע',
+    lowTraitComparison: 'מתעצבן מהר יותר',
+    highTraitComparison: 'רגוע יותר',
+  },
+  rationalism: {
+    scoreLabel: 'רציונליות',
+    lowTraitComparison: 'רגשי, רוחני וספיריטואלי יותר',
+    highTraitComparison: 'רציונלי יותר',
+  },
+  humor: {
+    scoreLabel: 'הומור',
+    lowTraitComparison: 'רציני יותר',
+    highTraitComparison: 'קליל והומוריסטי יותר',
+  },
+};
+
+const participantAxisResponseSchema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      participantCode: { type: Type.STRING },
+      liberalism: { type: Type.INTEGER },
+      calmness: { type: Type.INTEGER },
+      rationalism: { type: Type.INTEGER },
+      humor: { type: Type.INTEGER },
+    },
+    required: ['participantCode', 'liberalism', 'calmness', 'rationalism', 'humor'],
+  },
+};
+
+const clampParticipantAxisScore = (value: unknown): number => {
+  const numericValue = Math.round(Number(value));
+
+  if (Number.isNaN(numericValue)) {
+    return 5;
+  }
+
+  return Math.min(PARTICIPANT_AXIS_MAX, Math.max(PARTICIPANT_AXIS_MIN, numericValue));
+};
+
+const sortParticipantCodes = (codes: string[]): string[] => {
+  return [...codes].sort((a, b) => {
+    const aMatch = a.match(/^P(\d+)$/);
+    const bMatch = b.match(/^P(\d+)$/);
+
+    if (aMatch && bMatch) {
+      return Number(aMatch[1]) - Number(bMatch[1]);
+    }
+
+    return a.localeCompare(b);
+  });
+};
+
+const getParticipantCodesFromMessages = (messages: ChatMessage[]): string[] => {
+  const uniqueCodes = new Set<string>();
+
+  for (const message of messages) {
+    if (!message?.sender) continue;
+    uniqueCodes.add(message.sender);
+  }
+
+  return sortParticipantCodes(Array.from(uniqueCodes));
+};
+
+const buildParticipantAxisInstruction = (participantCodes: string[], responseFieldName = 'participantAxisScores'): string => {
+  if (participantCodes.length === 0) {
+    return '';
+  }
+
+  return `
+בנוסף לכל מה שכבר התבקשת לעשות, החזירו גם מערך JSON בשם "${responseFieldName}" עבור כל אחד מקודי המשתתפים הבאים:
+${participantCodes.join(', ')}
+
+לכל משתתף החזירו אובייקט עם השדות הבאים בלבד:
+- participantCode: קוד המשתתף בדיוק כפי שהוא מופיע ברשימה.
+- liberalism: מספר שלם בין 1 ל-10, כאשר 1 = שמרני מאוד ו-10 = ליברלי מאוד.
+- calmness: מספר שלם בין 1 ל-10, כאשר 1 = קל מאוד להתעצבן / להתרגז / לכעוס ו-10 = רגוע מאוד.
+- rationalism: מספר שלם בין 1 ל-10, כאשר 1 = רגשי, רוחני וספיריטואלי מאוד ו-10 = רציונלי מאוד.
+- humor: מספר שלם בין 1 ל-10, כאשר 1 = רציני מאוד ו-10 = קליל והומוריסטי מאוד.
+
+אל תחזירו שמות אמיתיים, אל תחזירו נימוקים, ואל תחסירו אף משתתף מהרשימה.
+`;
+};
+
+const normalizeParticipantAxisScores = (
+  rawScores: unknown,
+  allowedParticipantCodes: string[]
+): ParticipantAxisScore[] => {
+  if (allowedParticipantCodes.length === 0) {
+    return [];
+  }
+
+  if (!Array.isArray(rawScores)) {
+    return allowedParticipantCodes.map((participantCode) => ({
+      participantCode,
+      liberalism: 5,
+      calmness: 5,
+      rationalism: 5,
+      humor: 5,
+    }));
+  }
+
+  const allowedCodes = new Set(allowedParticipantCodes);
+  const normalizedScores = new Map<string, ParticipantAxisScore>();
+
+  rawScores.forEach((rawScore) => {
+    if (!rawScore || typeof rawScore !== 'object') {
+      return;
+    }
+
+    const candidate = rawScore as Record<string, unknown>;
+    const participantCode = typeof candidate.participantCode === 'string' ? candidate.participantCode.trim() : '';
+
+    if (!participantCode || !allowedCodes.has(participantCode)) {
+      return;
+    }
+
+    normalizedScores.set(participantCode, {
+      participantCode,
+      liberalism: clampParticipantAxisScore(candidate.liberalism),
+      calmness: clampParticipantAxisScore(candidate.calmness),
+      rationalism: clampParticipantAxisScore(candidate.rationalism),
+      humor: clampParticipantAxisScore(candidate.humor),
+    });
+  });
+
+  const missingParticipantCodes = allowedParticipantCodes.filter((participantCode) => !normalizedScores.has(participantCode));
+
+  if (missingParticipantCodes.length > 0) {
+    logger.warning('Participant axis response omitted some participants; filling with neutral scores', {
+      missingParticipantCodes,
+      returnedCount: normalizedScores.size,
+      expectedCount: allowedParticipantCodes.length,
+    });
+  }
+
+  return allowedParticipantCodes.map((participantCode) => {
+    return normalizedScores.get(participantCode) || {
+      participantCode,
+      liberalism: 5,
+      calmness: 5,
+      rationalism: 5,
+      humor: 5,
+    };
+  });
+};
+
+const calculateParticipantAxisPercentile = (
+  summary: ParticipantAxisDistributionSummary,
+  axis: ParticipantAxisKey,
+  score: number
+): { comparisonLabel: string; percentile: number } | null => {
+  const totalObservations = summary.totalObservations;
+
+  if (!totalObservations || totalObservations <= 1) {
+    return null;
+  }
+
+  const distribution = summary[axis];
+  const isLowPole = score < PARTICIPANT_AXIS_MIDPOINT;
+  let comparisonCount = 0;
+
+  for (let bucketScore = PARTICIPANT_AXIS_MIN; bucketScore <= PARTICIPANT_AXIS_MAX; bucketScore++) {
+    if (isLowPole && bucketScore > score) {
+      comparisonCount += distribution[bucketScore] || 0;
+    } else if (!isLowPole && bucketScore < score) {
+      comparisonCount += distribution[bucketScore] || 0;
+    }
+  }
+
+  const denominator = Math.max(1, totalObservations - 1);
+  const percentile = Math.max(0, Math.min(100, Math.round((comparisonCount / denominator) * 100)));
+  const comparisonLabel = isLowPole
+    ? PARTICIPANT_AXIS_META[axis].lowTraitComparison
+    : PARTICIPANT_AXIS_META[axis].highTraitComparison;
+
+  return { comparisonLabel, percentile };
+};
+
+const buildParticipantAxisSection = (
+  scores: ParticipantAxisScore[],
+  summary: ParticipantAxisDistributionSummary
+): string => {
+  if (!scores.length) {
+    return '';
+  }
+
+  const participantBlocks = scores.map((score) => {
+    const axisLines = PARTICIPANT_AXIS_KEYS.map((axis) => {
+      const axisScore = score[axis];
+      const percentileData = calculateParticipantAxisPercentile(summary, axis, axisScore);
+      const percentileSentence = percentileData
+        ? `${percentileData.comparisonLabel} מ- ${percentileData.percentile}% מהנבדקים!`
+        : 'עדיין אין מספיק נתונים להשוואה רחבה.';
+
+      return `- דירוג ה${PARTICIPANT_AXIS_META[axis].scoreLabel} הוא ${axisScore} מתוך 10. ${percentileSentence}`;
+    }).join('\n');
+
+    return `**${score.participantCode}**\n${axisLines}`;
+  }).join('\n\n');
+
+  return `\n\n**מפת הצירים של המשתתפים**\n${participantBlocks}`;
+};
+
+const extractJsonObjectCandidates = (text: string): string[] => {
+  const candidates: string[] = [];
+  let depth = 0;
+  let startIndex = -1;
+  let inString = false;
+  let isEscaped = false;
+
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === '\\') {
+        isEscaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      if (depth === 0) {
+        startIndex = index;
+      }
+      depth++;
+      continue;
+    }
+
+    if (char === '}') {
+      if (depth === 0) {
+        continue;
+      }
+
+      depth--;
+      if (depth === 0 && startIndex >= 0) {
+        candidates.push(text.slice(startIndex, index + 1));
+        startIndex = -1;
+      }
+    }
+  }
+
+  return candidates.sort((a, b) => b.length - a.length);
+};
+
+const parseStructuredJsonObject = (rawText: string): Record<string, any> | null => {
+  const cleanedWholeText = cleanJson(rawText);
+
+  try {
+    return JSON.parse(cleanedWholeText);
+  } catch {
+    // Continue to candidate extraction fallback below.
+  }
+
+  const candidates = extractJsonObjectCandidates(rawText);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(cleanJson(candidate));
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+};
+
+type AnalysisBudget =
+  | { metric: 'words'; max: number }
+  | { metric: 'tokens'; max: number };
+
+const getAnalysisBudget = (tier?: UserTier | string): AnalysisBudget => {
+  if (tier === 'basic' || tier === 'super' || tier === 'advanced') {
+    return { metric: 'tokens', max: PAID_ANALYSIS_MAX_TOKENS };
+  }
+
+  return { metric: 'words', max: FREE_ANALYSIS_MAX_WORDS };
+};
+
+const getAnalysisModel = (tier?: UserTier | string, analysisMode?: AnalysisDepthMode): string => {
+  if (tier === 'free') {
+    return FREE_ANALYSIS_MODEL;
+  }
+
+  if (analysisMode === 'standard') {
+    return FREE_ANALYSIS_MODEL;
+  }
+
+  if (tier === 'basic' || tier === 'super' || tier === 'advanced') {
+    return PAID_ANALYSIS_MODEL;
+  }
+
+  return FREE_ANALYSIS_MODEL;
+};
+
+const sanitizeUserQuestion = (question: string): string => {
+  return question
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/```/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, ASK_AUNT_MAX_QUESTION_CHARS);
+};
+
+const looksLikePromptInjection = (question: string): boolean => {
+  return ASK_AUNT_PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(question));
+};
+
+const limitAskAuntSections = (
+  sections: ChatRecordSection[],
+  maxWords: number = ASK_AUNT_MAX_WORDS
+): { sections: ChatRecordSection[]; strategy: ChunkingStrategy; originalWordCount: number } => {
+  const originalWordCount = sections.reduce((sum, section) => sum + getTotalWordCount(section.messages), 0);
+
+  if (originalWordCount <= maxWords) {
+    return {
+      sections: sections.filter((section) => section.messages.length > 0),
+      strategy: 'full',
+      originalWordCount
+    };
+  }
+
+  const nonEmptySections = sections.filter((section) => section.messages.length > 0);
+  if (nonEmptySections.length === 0) {
+    return { sections: [], strategy: 'full', originalWordCount };
+  }
+
+  const reservedMinimum = Math.min(3000, Math.floor(maxWords / nonEmptySections.length));
+  const remainingBudget = Math.max(0, maxWords - (reservedMinimum * nonEmptySections.length));
+  const totalNonEmptyWords = nonEmptySections.reduce((sum, section) => sum + getTotalWordCount(section.messages), 0);
+
+  const limitedSections = nonEmptySections.map((section, index) => {
+    const sectionWords = getTotalWordCount(section.messages);
+    const proportionalShare = totalNonEmptyWords > 0
+      ? Math.floor((sectionWords / totalNonEmptyWords) * remainingBudget)
+      : 0;
+    const sectionBudget = Math.max(1000, reservedMinimum + proportionalShare);
+    const remainingSections = nonEmptySections.length - index - 1;
+    const maxBudgetForThisSection = index === nonEmptySections.length - 1
+      ? maxWords
+      : maxWords - (remainingSections * 1000);
+    const boundedBudget = Math.min(sectionBudget, maxBudgetForThisSection);
+
+    return {
+      label: section.label,
+      messages: createGroupAnalysisChunks(section.messages, boundedBudget).chunks
+    };
+  }).filter((section) => section.messages.length > 0);
+
+  return {
+    sections: limitedSections,
+    strategy: 'sampled',
+    originalWordCount
+  };
+};
+
+const serializeChatSections = (sections: ChatRecordSection[]): string => {
+  return sections.map((section) => {
+    const serializedMessages = truncateChatForContext(section.messages, Infinity);
+    return `[${section.label}]\n${serializedMessages}`;
+  }).join('\n\n');
+};
 
 /**
  * Get active prompt - checks Firestore for draft/testing version first,
@@ -70,11 +501,8 @@ const truncateChatForContext = (messages: ChatMessage[], limit = 20000): string 
 
   for (const m of sourceMessages) {
     if (!m.content.trim()) continue;
-    // Convert date to Date object in case it's a string/number from API serialization
-    const dateObj = m.date instanceof Date ? m.date : new Date(m.date);
-    const dateStr = dateObj.getDate().toString().padStart(2, '0') + '/' + 
-                    (dateObj.getMonth() + 1).toString().padStart(2, '0') + '/' + 
-                    dateObj.getFullYear();
+    const dateStr = formatChatDate(m.date);
+    if (!dateStr) continue;
     if (dateStr !== lastDateStr) {
         fullText += `\n[${dateStr}]\n`;
         lastDateStr = dateStr;
@@ -167,32 +595,49 @@ const getApiKey = async (): Promise<string> => {
 export async function serverAnalyzeChatFull(
   messages: ChatMessage[],
   targetUser: string,
-  limit: number
+  limit: number,
+  tier: UserTier = 'free',
+  analysisMode?: AnalysisDepthMode
 ): Promise<{
   personality: string;
   othersThoughts: string;
   improvement: string;
   hiddenThoughts: string;
+  participantAxisScores?: ParticipantAxisScore[];
   strategy?: ChunkingStrategy;
   originalWordCount?: number;
+  originalTokenCount?: number;
 }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
-
-  // Apply smart chunking for large chats (> 50k words)
-  const chunkResult = createIndividualAnalysisChunks(messages, targetUser, 50000);
+  const budget = getAnalysisBudget(tier);
+  const model = getAnalysisModel(tier, analysisMode);
+  const chunkResult = budget.metric === 'tokens'
+    ? createIndividualAnalysisChunksByTokens(messages, targetUser, budget.max)
+    : createIndividualAnalysisChunks(messages, targetUser, budget.max);
   const chunkedMessages = chunkResult.chunks;
   const strategy = chunkResult.strategy;
-  const originalWordCount = chunkResult.originalWordCount;
+  const originalWordCount = 'originalWordCount' in chunkResult ? chunkResult.originalWordCount : undefined;
+  const originalTokenCount = 'originalTokenCount' in chunkResult ? chunkResult.originalTokenCount : undefined;
   
   // Verification logging (user requirement)
-  if (originalWordCount > 50000) {
+  if (budget.metric === 'tokens' && originalTokenCount && originalTokenCount > budget.max) {
+    const finalTokenCount = getTotalTokenCount(chunkedMessages);
+    const reduction = ((originalTokenCount - finalTokenCount) / originalTokenCount * 100).toFixed(1);
+    console.log('[Individual Analysis Verification]');
+    console.log(`  Tier: ${tier}`);
+    console.log(`  Original: ${originalTokenCount} tokens`);
+    console.log(`  Final: ${finalTokenCount} tokens`);
+    console.log(`  Reduction: ${reduction}%`);
+    console.log(`  Still over 200k? ${finalTokenCount > budget.max ? 'YES' : 'NO'}`);
+  } else if (budget.metric === 'words' && originalWordCount && originalWordCount > budget.max) {
     const finalWordCount = getTotalWordCount(chunkedMessages);
     const reduction = ((originalWordCount - finalWordCount) / originalWordCount * 100).toFixed(1);
-    console.log(`[Individual Analysis Verification]`);
+    console.log('[Individual Analysis Verification]');
+    console.log(`  Tier: ${tier}`);
     console.log(`  Original: ${originalWordCount} words`);
     console.log(`  Final: ${finalWordCount} words`);
     console.log(`  Reduction: ${reduction}%`);
-    console.log(`  Still over 50k? ${finalWordCount > 50000 ? 'YES ⚠️' : 'NO ✓'}`);
+    console.log(`  Still over 50k? ${finalWordCount > budget.max ? 'YES' : 'NO'}`);
   }
 
   const chatContext = truncateChatForContext(chunkedMessages, limit);
@@ -205,6 +650,8 @@ export async function serverAnalyzeChatFull(
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
   const individualAnalysisPrompt = await getActivePrompt('individualAnalysis');
+  const participantCodes = getParticipantCodesFromMessages(messages);
+  const participantAxisInstruction = buildParticipantAxisInstruction(participantCodes);
   
   // Replace template placeholders
   const finalPrompt = individualAnalysisPrompt.replace(/\{\{TARGET_USER\}\}/g, targetUser);
@@ -217,10 +664,12 @@ ${chatContext}
 </chat_history>
 
 ${finalPrompt}
+
+${participantAxisInstruction}
 `;
 
   const result = await ai.models.generateContent({
-    model: GEMINI_MODEL,
+    model,
     contents: prompt,
     config: {
       responseMimeType: "application/json",
@@ -230,38 +679,21 @@ ${finalPrompt}
           personality: { type: Type.STRING },
           othersThoughts: { type: Type.STRING },
           improvement: { type: Type.STRING },
-          hiddenThoughts: { type: Type.STRING }
+          hiddenThoughts: { type: Type.STRING },
+          participantAxisScores: participantAxisResponseSchema
         },
-        required: ["personality", "othersThoughts", "improvement", "hiddenThoughts"]
+        required: ["personality", "othersThoughts", "improvement", "hiddenThoughts", "participantAxisScores"]
       }
     }
   });
   
   const rawText = result.text || "";
-  const cleanedText = cleanJson(rawText);
-  
-  let parsed;
-  try {
-    parsed = JSON.parse(cleanedText);
-  } catch (error) {
+  const parsed = parseStructuredJsonObject(rawText);
+  if (!parsed) {
     logger.error('JSON parse error in serverAnalyzeChatFull', {
       rawTextLength: rawText?.length || 0,
-      cleanedTextLength: cleanedText?.length || 0,
-      rawTextPreview: rawText?.substring(0, 500),
-      cleanedTextPreview: cleanedText?.substring(0, 500),
-      errorPosition: error instanceof SyntaxError ? (error.message.match(/position (\d+)/) || [])[1] : 'unknown',
-      contextAroundError: error instanceof SyntaxError && error.message.includes('position') ? 
-        (() => {
-          const match = error.message.match(/position (\d+)/);
-          if (match) {
-            const pos = parseInt(match[1]);
-            const start = Math.max(0, pos - 50);
-            const end = Math.min(cleanedText.length, pos + 50);
-            return cleanedText.substring(start, end);
-          }
-          return '';
-        })() : ''
-    }, error instanceof Error ? error : undefined);
+      cleanedTextLength: cleanJson(rawText).length,
+    });
     
     // Fallback: return empty structure
     return {
@@ -272,40 +704,52 @@ ${finalPrompt}
     };
   }
 
+  const participantAxisScores = normalizeParticipantAxisScores(parsed.participantAxisScores, participantCodes);
+  await recordParticipantAxisScores(participantAxisScores, 'individual_analysis');
+
   return {
     personality: parsed.personality || "",
     othersThoughts: parsed.othersThoughts || "",
     improvement: parsed.improvement || "",
     hiddenThoughts: parsed.hiddenThoughts || "",
+    participantAxisScores,
     strategy,
     originalWordCount,
+    originalTokenCount,
   };
 }
 
 export async function serverAnalyzeGroupDynamics(
   messages: ChatMessage[],
   selectedParticipants: string[] | undefined,
-  limit: number
-): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number }> {
+  limit: number,
+  tier: UserTier = 'free',
+  analysisMode?: AnalysisDepthMode
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
-
-  // Apply smart chunking for large chats (> 50k words)
-  const chunkResult = createGroupAnalysisChunks(messages, 50000);
+  const budget = getAnalysisBudget(tier);
+  const model = getAnalysisModel(tier, analysisMode);
+  const chunkResult = budget.metric === 'tokens'
+    ? createGroupAnalysisChunksByTokens(messages, budget.max)
+    : createGroupAnalysisChunks(messages, budget.max);
   const chunkedMessages = chunkResult.chunks;
   const strategy = chunkResult.strategy;
-  const originalWordCount = chunkResult.originalWordCount;
+  const originalWordCount = 'originalWordCount' in chunkResult ? chunkResult.originalWordCount : undefined;
+  const originalTokenCount = 'originalTokenCount' in chunkResult ? chunkResult.originalTokenCount : undefined;
 
   const chatContext = truncateChatForContext(chunkedMessages, limit);
   
   const samplingNoteTemplate = strategy === 'sampled' ? await getActivePrompt('samplingNoteGroup') : '';
   const samplingNote = samplingNoteTemplate ? `\n  ${samplingNoteTemplate}\n  ` : '';
-  
+
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
   const groupPromptKey = selectedParticipants && selectedParticipants.length > 0 
     ? 'groupDynamicsWithParticipants' 
     : 'groupDynamicsWithoutParticipants';
   const groupAnalysisPrompt = await getActivePrompt(groupPromptKey);
+  const participantCodes = getParticipantCodesFromMessages(messages);
+  const participantAxisInstruction = buildParticipantAxisInstruction(participantCodes);
   
   // Replace template placeholders
   const participantList = selectedParticipants && selectedParticipants.length > 0
@@ -323,31 +767,82 @@ ${chatContext}
 </chat_history>
 
 ${finalPrompt}
+
+החזירו את כל התשובה כ-JSON יחיד עם שני שדות:
+- analysisText: כל הטקסט המלא של הניתוח הקבוצתי, בדיוק בפורמט שהתבקשתם כבר להחזיר.
+- participantAxisScores: מערך ציוני המשתתפים.
+
+${participantAxisInstruction}
 `;
 
   const result = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt
+    model,
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          analysisText: { type: Type.STRING },
+          participantAxisScores: participantAxisResponseSchema
+        },
+        required: ['analysisText', 'participantAxisScores']
+      }
+    }
   });
+
+  const rawText = result.text || "";
+  const parsed = parseStructuredJsonObject(rawText);
+
+  if (!parsed) {
+    logger.error('JSON parse error in serverAnalyzeGroupDynamics', {
+      rawTextLength: rawText?.length || 0,
+      cleanedTextLength: cleanJson(rawText).length,
+    });
+
+    const participantAxisScores = normalizeParticipantAxisScores(undefined, participantCodes);
+    await recordParticipantAxisScores(participantAxisScores, 'group_dynamics');
+    const participantAxisSummary = await getParticipantAxisDistributionSummary();
+    const participantAxisSection = buildParticipantAxisSection(participantAxisScores, participantAxisSummary);
+
+    return {
+      result: `${rawText || ""}${participantAxisSection}`,
+      strategy,
+      originalWordCount,
+      originalTokenCount
+    };
+  }
+
+  const participantAxisScores = normalizeParticipantAxisScores(parsed.participantAxisScores, participantCodes);
+  await recordParticipantAxisScores(participantAxisScores, 'group_dynamics');
+  const participantAxisSummary = await getParticipantAxisDistributionSummary();
+  const participantAxisSection = buildParticipantAxisSection(participantAxisScores, participantAxisSummary);
+  const analysisText = `${parsed.analysisText || ''}${participantAxisSection}`;
   
   return {
-    result: result.text || "",
+    result: analysisText,
     strategy,
-    originalWordCount
+    originalWordCount,
+    originalTokenCount
   };
 }
 
 export async function serverAnalyzeRomanticDynamics(
   messages: ChatMessage[],
-  limit: number
-): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number }> {
+  limit: number,
+  tier: UserTier = 'free',
+  analysisMode?: AnalysisDepthMode
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
-
-  // Apply smart chunking for large chats (> 50k words)
-  const chunkResult = createGroupAnalysisChunks(messages, 50000);
+  const budget = getAnalysisBudget(tier);
+  const model = getAnalysisModel(tier, analysisMode);
+  const chunkResult = budget.metric === 'tokens'
+    ? createGroupAnalysisChunksByTokens(messages, budget.max)
+    : createGroupAnalysisChunks(messages, budget.max);
   const chunkedMessages = chunkResult.chunks;
   const strategy = chunkResult.strategy;
-  const originalWordCount = chunkResult.originalWordCount;
+  const originalWordCount = 'originalWordCount' in chunkResult ? chunkResult.originalWordCount : undefined;
+  const originalTokenCount = 'originalTokenCount' in chunkResult ? chunkResult.originalTokenCount : undefined;
 
   const chatContext = truncateChatForContext(chunkedMessages, limit);
   
@@ -357,6 +852,8 @@ export async function serverAnalyzeRomanticDynamics(
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
   const romanticAnalysisPrompt = await getActivePrompt('romanticDynamics');
+  const participantCodes = getParticipantCodesFromMessages(messages);
+  const participantAxisInstruction = buildParticipantAxisInstruction(participantCodes);
 
   const prompt = `
   ${systemInstruction}${samplingNote}
@@ -366,17 +863,127 @@ export async function serverAnalyzeRomanticDynamics(
   </chat_history>
   
   ${romanticAnalysisPrompt}
+
+  החזירו את כל התשובה כ-JSON יחיד עם שני שדות:
+  - analysisText: כל הטקסט המלא של ניתוח הזוגיות, בדיוק בפורמט שהתבקשתם כבר להחזיר.
+  - participantAxisScores: מערך ציוני המשתתפים.
+
+  ${participantAxisInstruction}
   `;
 
   const result = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt
+    model,
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          analysisText: { type: Type.STRING },
+          participantAxisScores: participantAxisResponseSchema
+        },
+        required: ['analysisText', 'participantAxisScores']
+      }
+    }
   });
+
+  const rawText = result.text || "";
+  const parsed = parseStructuredJsonObject(rawText);
+
+  if (!parsed) {
+    logger.error('JSON parse error in serverAnalyzeRomanticDynamics', {
+      rawTextLength: rawText?.length || 0,
+      cleanedTextLength: cleanJson(rawText).length,
+    });
+
+    const participantAxisScores = normalizeParticipantAxisScores(undefined, participantCodes);
+    await recordParticipantAxisScores(participantAxisScores, 'romantic_dynamics');
+
+    return {
+      result: rawText || "",
+      strategy,
+      originalWordCount,
+      originalTokenCount
+    };
+  }
+
+  const participantAxisScores = normalizeParticipantAxisScores(parsed.participantAxisScores, participantCodes);
+  await recordParticipantAxisScores(participantAxisScores, 'romantic_dynamics');
   
   return {
-    result: result.text || "",
+    result: parsed.analysisText || "",
     strategy,
-    originalWordCount
+    originalWordCount,
+    originalTokenCount
+  };
+}
+
+export async function serverAskTheAunt(
+  chatSections: ChatRecordSection[],
+  targetUser: string | null,
+  userQuestion: string
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number }> {
+  const sanitizedQuestion = sanitizeUserQuestion(userQuestion);
+
+  if (!sanitizedQuestion) {
+    throw new Error('Question is required');
+  }
+
+  if (looksLikePromptInjection(sanitizedQuestion)) {
+    logger.warning('Ask the Aunt request rejected due to suspicious question content', {
+      targetUser,
+    });
+    throw new Error('Please rewrite the question as a plain question about the chat.');
+  }
+
+  const limitedSections = limitAskAuntSections(chatSections, ASK_AUNT_MAX_WORDS);
+  if (limitedSections.sections.length === 0) {
+    throw new Error(targetUser ? 'No relevant messages were found for the selected participant.' : 'No chat messages were available for this question.');
+  }
+
+  const ai = new GoogleGenAI({ apiKey: await getApiKey() });
+  const systemInstruction = await getSystemInstruction();
+  const questionScope = targetUser ? `about ${targetUser}` : 'about the overall chat';
+  const scopeNote = targetUser
+    ? `Only messages written by ${targetUser} or messages that explicitly mention ${targetUser} were preserved from the relevant records. Do not assume anything from messages that were not preserved.`
+    : 'This question is general, so the answer must be based only on the original uploaded chat record. No additional chat files were included.';
+  const askTheAuntPrompt = (await getActivePrompt('askTheAunt'))
+    .replace(/\{\{QUESTION_SCOPE\}\}/g, questionScope)
+    .replace(/\{\{SCOPE_NOTE\}\}/g, scopeNote);
+  const chatHistory = serializeChatSections(limitedSections.sections);
+  const multiChatNote = limitedSections.sections.length > 1
+    ? `This context combines ${limitedSections.sections.length} separate chat records. Each labeled section is a different chat record.`
+    : targetUser ? 'This context contains one filtered chat record.' : 'This context contains the original uploaded chat record only.';
+
+  const prompt = `
+${systemInstruction}
+
+<context_note>
+${multiChatNote}
+${scopeNote}
+If context is partial or sampled, be transparent about uncertainty and do not overgeneralize from silence.
+</context_note>
+
+<chat_history>
+${chatHistory}
+</chat_history>
+
+<user_question>
+${sanitizedQuestion}
+</user_question>
+
+${askTheAuntPrompt}
+`;
+
+  const result = await ai.models.generateContent({
+    model: ASK_AUNT_MODEL,
+    contents: prompt
+  });
+
+  return {
+    result: result.text || '',
+    strategy: limitedSections.strategy,
+    originalWordCount: limitedSections.originalWordCount
   };
 }
 
@@ -390,7 +997,7 @@ export async function serverSummarizeForSharing(analysisText: string): Promise<s
   const prompt = finalPrompt;
 
   const result = await ai.models.generateContent({
-    model: GEMINI_MODEL,
+    model: UTILITY_GEMINI_MODEL,
     contents: prompt
   });
   
@@ -400,7 +1007,6 @@ export async function serverSummarizeForSharing(analysisText: string): Promise<s
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
   logger.info('Vertex AI Imagen: Starting image generation', {
     promptLength: prompt.length,
-    promptPreview: prompt.substring(0, 200)
   });
   
   const projectId = process.env.FIREBASE_PROJECT_ID || 'social-analyzer-24750033-dc53d';
@@ -419,13 +1025,13 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
     apiEndpoint: `${location}-aiplatform.googleapis.com`,
   };
 
-  // In local development, use service account key
-  try {
-    const serviceAccountKey = require('../firebase-admin-key.json');
-    clientOptions.credentials = serviceAccountKey;
+  // In local development, use a service account key if one is present.
+  const serviceAccountPath = path.join(process.cwd(), 'firebase-admin-key.json');
+  if (existsSync(serviceAccountPath)) {
+    clientOptions.credentials = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
     logger.info('Vertex AI Imagen: Using local service account credentials');
-  } catch (error) {
-    // In production (Firebase App Hosting), use Application Default Credentials
+  } else {
+    // In production (Firebase App Hosting), use Application Default Credentials.
     logger.info('Vertex AI Imagen: Using Application Default Credentials (production)');
   }
 
@@ -543,7 +1149,7 @@ export async function serverGetVisualAssetData(
     .replace(/\{\{ANALYSIS_TEXT\}\}/g, analysisText);
 
   const result = await ai.models.generateContent({
-    model: GEMINI_MODEL,
+    model: UTILITY_GEMINI_MODEL,
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -566,8 +1172,6 @@ export async function serverGetVisualAssetData(
     data = JSON.parse(cleanedText);
   } catch (error) {
     console.error('JSON Parse Error in serverGetVisualAssetData:', error);
-    console.error('Raw text:', result.text);
-    console.error('Cleaned text:', cleanedText);
     
     // Fallback data
     data = {

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { UserTier, AnalysisType, CardColor } from '@/types';
-import { User, Star, Zap, Heart } from 'lucide-react';
+import { MessageCircleQuestion, User, Star, Zap, Heart } from 'lucide-react';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon } from '@/components/Icons';
 
 export const LOGO_URL = "https://madaduhcom.wpcomstaging.com/wp-content/uploads/2026/02/logo-psychologist.png";
@@ -21,7 +21,7 @@ export const TIER_CONFIG: Record<UserTier, { label: string, description: string,
     icon: <User className="w-5 h-5" />,
     color: 'bg-slate-100 border-slate-200 text-slate-700'
   },
-  advanced: { 
+  basic: { 
     label: 'משתמש מתקדם', 
     description: 'ניתוח מלא של כל ההיסטוריה (ללא הגבלה)', 
     limit: Infinity, // Full history analysis
@@ -42,6 +42,7 @@ export const ANALYSIS_CONFIG: Record<string, { title: string, description: strin
   [AnalysisType.OTHERS_THOUGHTS]: { title: 'מה חושבים עליי?', description: 'גלה מה המשתתפים האחרים באמת מרגישים כלפיך.', icon: <SecretIcon />, color: 'red' },
   [AnalysisType.HIDDEN_THOUGHTS]: { title: 'מחשבות נסתרות', description: 'להסתכל על מה שלא נאמר. חשיפת הסאבטקסט, העקיצות והמטענים הרגשיים המוסתרים.', icon: <WarningIcon />, color: 'orange' },
   [AnalysisType.IMPROVEMENT]: { title: 'איך להשתפר?', description: 'קבל כלים וטיפים מעשיים לשיפור התקשורת, חיזוק הקשרים והעלאת המעמד החברתי.', icon: <HappyIcon />, color: 'green' },
+  [AnalysisType.ASK_AUNT]: { title: 'שאל את הדודה', description: 'שאלה אחת ממוקדת על אדם אחד, עם אפשרות לצרף עוד צ׳אטים שיעזרו לדייק את התשובה.', icon: <MessageCircleQuestion className="w-6 h-6" />, color: 'cyan' },
   [AnalysisType.ROMANTIC_DYNAMICS]: { title: 'ניתוח זוגיות', description: 'אבחון מעמיק של הדינמיקה הזוגית, סגנונות תקשורת וצרכים רגשיים על ידי "מטפלת זוגית".', icon: <Heart className="w-6 h-6" />, color: 'pink' },
   [AnalysisType.GROUP_DYNAMICS]: { title: 'ניתוח קבוצתי מלא', description: 'גלה מי המנהיג, מי עושה צרות, ומהם המתחים הנסתרים בין 10 המשתתפים המובילים.', icon: <GroupIcon />, color: 'indigo' }
 };

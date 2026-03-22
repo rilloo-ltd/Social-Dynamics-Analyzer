@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { messages, selectedParticipants, limit } = body;
+    const { messages, selectedParticipants, limit, tier, analysisMode } = body;
 
     if (!messages) {
       return NextResponse.json(
@@ -17,10 +17,12 @@ export async function POST(request: NextRequest) {
     logger.info('Group dynamics analysis started', {
       messageCount: messages.length,
       participantCount: selectedParticipants?.length,
-      limit
+      limit,
+      tier: tier || 'free',
+      analysisMode: analysisMode || 'default'
     });
 
-    const result = await serverAnalyzeGroupDynamics(messages, selectedParticipants, limit || Infinity);
+    const result = await serverAnalyzeGroupDynamics(messages, selectedParticipants, limit || Infinity, tier || 'free', analysisMode);
 
     return NextResponse.json(result);
   } catch (error) {

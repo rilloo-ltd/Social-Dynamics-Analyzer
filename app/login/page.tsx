@@ -1,9 +1,9 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signInWithEmail, signInWithGoogle } from '../../lib/auth';
+import { redirectToCanonicalLocalhost, signInWithEmail, signInWithGoogle } from '../../lib/auth';
 import { LOGO_URL } from '@/lib/constants';
 import { Mail, Lock, AlertCircle } from 'lucide-react';
 
@@ -13,6 +13,10 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    redirectToCanonicalLocalhost();
+  }, []);
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();

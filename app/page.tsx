@@ -4,11 +4,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { FileUpload } from '@/components/FileUpload';
 import { parseChatFile } from '@/services/chatParser';
-import { ChatMessage, ParsedChat, AnalysisType, CardColor, UserTier } from '@/types';
-import { createFullAnalysisCacheKey, createGroupDynamicsCacheKey } from '@/lib/cache-utils';
-import { getChatMetadata, getTruncatedMessages } from '@/lib/chat-utils';
-import { uploadChatAction, updateChatCacheAction, loadCachedOutputsAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
-import { generateChatCodeClient } from '@/lib/client-hash';
+import { AnalysisDepthMode, ChatMessage, ChatRecordSection, ParsedChat, AnalysisType, CardColor, UserTier } from '@/types';
+import { createFullAnalysisCacheKey, createGroupDynamicsCacheKey, createRomanticDynamicsCacheKey } from '@/lib/cache-utils';
+import { 
+  buildPersonReferenceAliases,
+  createMessageLookup,
+  createMessageLookupKey,
+  formatChatDate,
+  getChatMetadata,
+  getTotalWordCount,
+  getTruncatedMessages,
+  isMessageByOrAboutPerson,
+  messageIsByPerson,
+  replacePersonAliasesInText
+} from '@/lib/chat-utils';
+import { isSupportedChatUploadFile, readChatUploadFile } from '@/lib/chat-file-utils';
+import { updateChatCacheAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
 import { checkUnlimitedAccessAction } from '@/app/actions/admin-actions';
 import { AnalysisCard } from '@/components/AnalysisCard';
 import { AnalysisModal } from '@/components/AnalysisModal';
@@ -16,22 +27,27 @@ import { GroupParticipantSelector } from '@/components/GroupParticipantSelector'
 import { HowToExport } from '@/components/HowToExport';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
+import LongChatAnalysisChoiceModal from '@/components/LongChatAnalysisChoiceModal';
+import AskTheAuntModal from '@/components/AskTheAuntModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon, LightbulbIcon } from '@/components/Icons';
-import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp, Gift } from 'lucide-react';
+import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp, Gift, Hash } from 'lucide-react';
 import { 
   LOGO_URL, 
   TIER_CONFIG, 
   ANALYSIS_CONFIG, 
+  MAX_FILE_SIZE_BYTES,
   PRIVACY_DISCLAIMER_TEXT,
   LOADING_MESSAGES_PHASE_1,
   LOADING_MESSAGES_PHASE_2,
   LOADING_MESSAGES_PHASE_3
 } from '@/lib/constants';
 import { logClientError, isServerActionNotFoundError, getClientErrorMessage } from '@/lib/client-logger';
+import { getStoredTestAuthEmail } from '@/lib/auth';
 import AuthDetails from '@/components/AuthDetails';
 import PromoCodeModal from '@/components/PromoCodeModal';
 import { auth } from '@/lib/firebase';
-import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { User as FirebaseUser } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { 
   analytics, 
   MixpanelEvents, 
@@ -44,6 +60,9 @@ import {
 } from '@/lib/mixpanel';
 
 export default function HomePage() {
+  const AUTH_DISABLED_FOR_TESTING = true;
+  const ASK_THE_AUNT_MAX_EXTRA_FILES = 3;
+  const ASK_AUNT_GENERAL_RESULT_KEY = '__ASK_AUNT_GENERAL__';
   const router = useRouter();
   const [chatData, setChatData] = useState<ParsedChat | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
@@ -63,6 +82,7 @@ export default function HomePage() {
   });
   const usedHighlightIndicesRef = useRef<Set<number>>(new Set());
   const usedMessagesRef = useRef<Set<string>>(new Set());
+  const pastedChatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const isLoadingRef = useRef(false);
   isLoadingRef.current = loading || isProcessingFile;
 
@@ -71,13 +91,28 @@ export default function HomePage() {
   const [cachedOutputs, setCachedOutputs] = useState<Record<string, any>>({});
   const [isNewSessionMode, setIsNewSessionMode] = useState<boolean>(false);
   const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
+  const [testAuthEmail, setTestAuthEmail] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: 2 });
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [pendingAnalysis, setPendingAnalysis] = useState<{type: AnalysisType, participants?: string[]} | null>(null);
+  const [analysisDepthMode, setAnalysisDepthMode] = useState<AnalysisDepthMode | null>(null);
+  const [uploadedWordCount, setUploadedWordCount] = useState(0);
+  const [showLongChatChoiceModal, setShowLongChatChoiceModal] = useState(false);
+  const [pendingLongChatAnalysis, setPendingLongChatAnalysis] = useState<{ type: AnalysisType, participants?: string[] } | null>(null);
   const [showPromoCodeModal, setShowPromoCodeModal] = useState(false);
+  const [pastedChatText, setPastedChatText] = useState("");
+  const [showAskTheAuntModal, setShowAskTheAuntModal] = useState(false);
+  const [isAskTheAuntGeneralQuestion, setIsAskTheAuntGeneralQuestion] = useState(false);
+  const [askTheAuntTargetUser, setAskTheAuntTargetUser] = useState<string | null>(null);
+  const [askTheAuntQuestion, setAskTheAuntQuestion] = useState('');
+  const [askTheAuntWantsExtraChats, setAskTheAuntWantsExtraChats] = useState(false);
+  const [askTheAuntExtraFiles, setAskTheAuntExtraFiles] = useState<File[]>([]);
+  const [askTheAuntError, setAskTheAuntError] = useState<string | null>(null);
+  const [isAskTheAuntSubmitting, setIsAskTheAuntSubmitting] = useState(false);
+  const [activeAskTheAuntResultKey, setActiveAskTheAuntResultKey] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/messages')
@@ -91,10 +126,20 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (AUTH_DISABLED_FOR_TESTING) {
+      setAuthUser(null);
+      setTestAuthEmail(getStoredTestAuthEmail());
+      setAuthChecking(false);
+      setIsAdmin(false);
+      setSelectedTier('super');
+      return;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setAuthUser(user);
       setAuthChecking(false);
       if (user) {
+        setTestAuthEmail(null);
         // Check admin status
         user.getIdToken().then(token => {
           fetch('/api/check-admin', {
@@ -123,6 +168,7 @@ export default function HomePage() {
           // Keep default 'free' tier on error
         });
       } else {
+        setTestAuthEmail(getStoredTestAuthEmail());
         setIsAdmin(false);
         setSelectedTier('free'); // Reset to free tier when logged out
       }
@@ -137,12 +183,7 @@ export default function HomePage() {
         // Do nothing, stay on chat view
       } else if (chatData) {
         // User pressed back while viewing chat - clear chat data
-        setChatData(null);
-        setSelectedUser(null);
-        setUserAnalysisData({});
-        setActiveAnalysisType(null);
-        setCachedOutputs({});
-        setChatCode(null);
+        clearLoadedChat();
       }
     };
 
@@ -202,6 +243,458 @@ export default function HomePage() {
     } catch (e) { console.error("Log feedback failed", e); }
   };
 
+  const escapeRegex = (value: string): string => {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  };
+
+  const deanonymizeText = (value: any, reverseMap: Record<string, string>): string => {
+    if (typeof value !== 'string') {
+      console.warn('deanonymizeText received non-string type:', typeof value);
+      return value;
+    }
+
+    let text = value || '';
+    text = text.replace(/\[Participant_(\d+)\]/g, 'P$1');
+
+    const sortedKeys = Object.keys(reverseMap).sort((a, b) => b.length - a.length);
+    if (sortedKeys.length === 0) {
+      return text;
+    }
+
+    const pattern = new RegExp(sortedKeys.map((key) => escapeRegex(key)).join('|'), 'g');
+    return text.replace(pattern, (matched) => reverseMap[matched] || matched);
+  };
+
+  const getApiErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+    if ([502, 503, 504, 522, 524].includes(response.status)) {
+      return 'שרת הניתוח לא הספיק להשיב בזמן. נסו שוב בעוד רגע, או נסו ניתוח קצר יותר.';
+    }
+
+    try {
+      const data = await response.clone().json();
+      if (typeof data?.error === 'string' && data.error.trim()) {
+        return data.error.trim();
+      }
+    } catch {}
+
+    try {
+      const text = await response.text();
+      const trimmedText = text.trim();
+      if (trimmedText && !/^<!DOCTYPE|^<html/i.test(trimmedText)) {
+        return trimmedText;
+      }
+    } catch {}
+
+    if (response.statusText?.trim()) {
+      return `${fallback}: ${response.statusText.trim()}`;
+    }
+
+    return `${fallback} (${response.status})`;
+  };
+
+  const resetAskTheAuntState = () => {
+    setShowAskTheAuntModal(false);
+    setIsAskTheAuntGeneralQuestion(false);
+    setAskTheAuntTargetUser(null);
+    setAskTheAuntQuestion('');
+    setAskTheAuntWantsExtraChats(false);
+    setAskTheAuntExtraFiles([]);
+    setAskTheAuntError(null);
+    setIsAskTheAuntSubmitting(false);
+    setActiveAskTheAuntResultKey(null);
+  };
+
+  const buildAskTheAuntContext = (
+    targetDisplayName: string | null,
+    extraChats: ParsedChat[]
+  ): { chatSections: ChatRecordSection[]; reverseMap: Record<string, string>; targetUser: string | null } => {
+    if (!chatData) {
+      throw new Error('No chat is currently loaded.');
+    }
+
+    if (targetDisplayName === null) {
+      return {
+        chatSections: [
+          {
+            label: 'צ׳אט מקורי',
+            messages: chatData.anonymizedMessages
+          }
+        ],
+        reverseMap: { ...chatData.reverseMap },
+        targetUser: null
+      };
+    }
+
+    const targetDisplayNameValue = targetDisplayName;
+    const aliases = buildPersonReferenceAliases(targetDisplayNameValue, chatData.participants);
+    const targetUser = chatData.nameMap[targetDisplayNameValue] || targetDisplayNameValue;
+    const combinedReverseMap: Record<string, string> = { ...chatData.reverseMap };
+    const globalNameMap: Record<string, string> = { ...chatData.nameMap };
+    let nextPlaceholderNumber = Object.keys(combinedReverseMap).reduce((max, key) => {
+      const match = key.match(/^P(\d+)$/);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0) + 1;
+
+    const remapChat = (parsedChat: ParsedChat, label: string): ChatRecordSection | null => {
+      const anonymizedLookup = createMessageLookup(parsedChat.anonymizedMessages);
+      const localToGlobalPlaceholders: Record<string, string> = {};
+
+      Object.entries(parsedChat.reverseMap).forEach(([localPlaceholder, realName]) => {
+        if (messageIsByPerson(realName, aliases)) {
+          localToGlobalPlaceholders[localPlaceholder] = targetUser;
+          combinedReverseMap[targetUser] = targetDisplayNameValue;
+          return;
+        }
+
+        let globalPlaceholder = globalNameMap[realName];
+        if (!globalPlaceholder) {
+          globalPlaceholder = `P${nextPlaceholderNumber++}`;
+          globalNameMap[realName] = globalPlaceholder;
+          combinedReverseMap[globalPlaceholder] = realName;
+        }
+
+        localToGlobalPlaceholders[localPlaceholder] = globalPlaceholder;
+      });
+
+      const sortedLocalPlaceholders = Object.keys(localToGlobalPlaceholders).sort((a, b) => b.length - a.length);
+
+      const filteredMessages = parsedChat.messages.reduce((acc, message) => {
+        if (!isMessageByOrAboutPerson(message, aliases)) {
+          return acc;
+        }
+
+        const lookupKey = createMessageLookupKey(message);
+        const bucket = anonymizedLookup.get(lookupKey);
+        const matchedMessage = bucket?.shift();
+
+        if (!matchedMessage) {
+          return acc;
+        }
+
+        if (bucket && bucket.length === 0) {
+          anonymizedLookup.delete(lookupKey);
+        }
+
+        let remappedSender = matchedMessage.sender;
+        let remappedContent = matchedMessage.content;
+
+        sortedLocalPlaceholders.forEach((localPlaceholder) => {
+          const globalPlaceholder = localToGlobalPlaceholders[localPlaceholder];
+          const placeholderPattern = new RegExp(escapeRegex(localPlaceholder), 'g');
+          remappedContent = remappedContent.replace(placeholderPattern, globalPlaceholder);
+          if (remappedSender === localPlaceholder) {
+            remappedSender = globalPlaceholder;
+          }
+        });
+
+        remappedContent = replacePersonAliasesInText(remappedContent, aliases, targetUser);
+        if (messageIsByPerson(message.sender, aliases)) {
+          remappedSender = targetUser;
+        }
+
+        if (!remappedContent.trim()) {
+          return acc;
+        }
+
+        acc.push({
+          ...matchedMessage,
+          sender: remappedSender,
+          content: remappedContent
+        });
+
+        return acc;
+      }, [] as ChatMessage[]);
+
+      if (filteredMessages.length === 0) {
+        return null;
+      }
+
+      return {
+        label,
+        messages: filteredMessages
+      };
+    };
+
+    const sections = [
+      remapChat(chatData, 'צ׳אט מקורי'),
+      ...extraChats.map((parsedChat, index) => remapChat(parsedChat, `צ׳אט נוסף ${index + 1}`))
+    ].filter(Boolean) as ChatRecordSection[];
+
+    if (sections.length === 0) {
+      throw new Error('לא מצאתי מספיק הודעות רלוונטיות על האדם שבחרתם.');
+    }
+
+    return {
+      chatSections: sections,
+      reverseMap: combinedReverseMap,
+      targetUser
+    };
+  };
+
+  const clearLoadedChat = () => {
+    setChatData(null);
+    setSelectedUser(null);
+    setUserAnalysisData({});
+    setActiveAnalysisType(null);
+    setCachedOutputs({});
+    setChatCode(null);
+    setUploadedWordCount(0);
+    setAnalysisDepthMode(null);
+    setShowLongChatChoiceModal(false);
+    setPendingLongChatAnalysis(null);
+    resetAskTheAuntState();
+  };
+
+  const renderPaidTierBadge = (positionClasses = 'top-4 left-4') => {
+    if (selectedTier !== 'basic' && selectedTier !== 'super') {
+      return null;
+    }
+
+    const isSuperTier = selectedTier === 'super';
+    const badgeLabel = isSuperTier ? 'Super User' : 'Basic User';
+    const badgeClasses = isSuperTier
+      ? 'from-amber-500 to-orange-500 text-white shadow-amber-500/30'
+      : 'from-indigo-600 to-violet-600 text-white shadow-indigo-500/30';
+    const Icon = isSuperTier ? Star : Zap;
+
+    return (
+      <div className={`fixed ${positionClasses} z-[60]`}>
+        <div className={`inline-flex items-center gap-2 rounded-full bg-gradient-to-r px-4 py-2 text-sm font-bold shadow-lg ${badgeClasses}`}>
+          <Icon className="w-4 h-4" />
+          <span>{badgeLabel}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const isPaidTier = selectedTier === 'basic' || selectedTier === 'super';
+  const hasVisibleAuthSession = !!authUser || !!testAuthEmail;
+  const isPaidLongChat = isPaidTier && uploadedWordCount > 50000;
+  const getRequestedAnalysisMode = (): AnalysisDepthMode => {
+    if (selectedTier === 'free') {
+      return 'standard';
+    }
+
+    if (isPaidLongChat) {
+      return analysisDepthMode || 'deep';
+    }
+
+    return 'deep';
+  };
+
+  const getAnalysisModeCacheSuffix = (): string => {
+    return isPaidLongChat ? `_${getRequestedAnalysisMode()}` : '';
+  };
+
+  const buildCacheKey = (baseKey: string): string => {
+    if (!baseKey) return '';
+    return `${baseKey}${getAnalysisModeCacheSuffix()}`;
+  };
+
+  const hasParticipantAxisSection = (value: unknown): boolean => {
+    return (
+      typeof value === 'string' &&
+      value.includes('מפת הצירים של המשתתפים') &&
+      value.includes('דירוג הליברליזם הוא') &&
+      value.includes('דירוג ההומור הוא') &&
+      !value.includes('עדיין אין מספיק נתונים להשוואה רחבה')
+    );
+  };
+
+  const handleOpenAskTheAuntModal = (mode: 'person' | 'general' = 'person') => {
+    if (!chatData) return;
+
+    const isGeneralMode = mode === 'general';
+
+    setAskTheAuntError(null);
+    setIsAskTheAuntGeneralQuestion(isGeneralMode);
+    if (isGeneralMode) {
+      setAskTheAuntWantsExtraChats(false);
+      setAskTheAuntExtraFiles([]);
+    } else {
+      setAskTheAuntTargetUser(selectedUser || askTheAuntTargetUser || chatData.participants[0] || null);
+    }
+    setShowAskTheAuntModal(true);
+  };
+
+  const handleCloseAskTheAuntModal = () => {
+    setShowAskTheAuntModal(false);
+    setAskTheAuntError(null);
+  };
+
+  const handleAskTheAuntWantsExtraChatsChange = (value: boolean) => {
+    if (isAskTheAuntGeneralQuestion) {
+      setAskTheAuntWantsExtraChats(false);
+      setAskTheAuntExtraFiles([]);
+      return;
+    }
+
+    setAskTheAuntWantsExtraChats(value);
+    setAskTheAuntError(null);
+
+    if (!value) {
+      setAskTheAuntExtraFiles([]);
+    }
+  };
+
+  const handleAskTheAuntExtraFilesSelected = (files: FileList | null) => {
+    if (!files) return;
+
+    if (isAskTheAuntGeneralQuestion) {
+      setAskTheAuntError('בשאלה כללית אי אפשר לצרף קבצים נוספים.');
+      return;
+    }
+
+    const incomingFiles = Array.from(files);
+    if (incomingFiles.length === 0) return;
+
+    const unsupportedFile = incomingFiles.find((file) => !isSupportedChatUploadFile(file));
+    if (unsupportedFile) {
+      setAskTheAuntError(`הקובץ "${unsupportedFile.name}" אינו נתמך. העלו קובץ TXT או ZIP בלבד.`);
+      return;
+    }
+
+    const oversizedFile = incomingFiles.find((file) => file.size > MAX_FILE_SIZE_BYTES);
+    if (oversizedFile) {
+      setAskTheAuntError(`הקובץ "${oversizedFile.name}" גדול מדי. הגודל המקסימלי הוא 10MB.`);
+      return;
+    }
+
+    const mergedFiles = [...askTheAuntExtraFiles];
+    incomingFiles.forEach((file) => {
+      const alreadyExists = mergedFiles.some((existingFile) =>
+        existingFile.name === file.name &&
+        existingFile.size === file.size &&
+        existingFile.lastModified === file.lastModified
+      );
+
+      if (!alreadyExists) {
+        mergedFiles.push(file);
+      }
+    });
+
+    if (mergedFiles.length > ASK_THE_AUNT_MAX_EXTRA_FILES) {
+      setAskTheAuntError(`אפשר לצרף עד ${ASK_THE_AUNT_MAX_EXTRA_FILES} צ'אטים נוספים.`);
+      setAskTheAuntExtraFiles(mergedFiles.slice(0, ASK_THE_AUNT_MAX_EXTRA_FILES));
+      return;
+    }
+
+    setAskTheAuntError(null);
+    setAskTheAuntExtraFiles(mergedFiles);
+  };
+
+  const handleRemoveAskTheAuntFile = (index: number) => {
+    setAskTheAuntExtraFiles((previousFiles) => previousFiles.filter((_, fileIndex) => fileIndex !== index));
+    setAskTheAuntError(null);
+  };
+
+  const handleAskTheAuntSubmit = async () => {
+    if (!chatData) return;
+
+    const targetDisplayName = isAskTheAuntGeneralQuestion ? null : (askTheAuntTargetUser || selectedUser);
+    const trimmedQuestion = askTheAuntQuestion.trim();
+    const resultKey = targetDisplayName || ASK_AUNT_GENERAL_RESULT_KEY;
+
+    if (!isAskTheAuntGeneralQuestion && !targetDisplayName) {
+      setAskTheAuntError('בחרו את האדם שעליו אתם רוצים לשאול.');
+      return;
+    }
+
+    if (!trimmedQuestion) {
+      setAskTheAuntError('כתבו שאלה אחת ברורה כדי שאפשר יהיה לנתח אותה.');
+      return;
+    }
+
+    if (!isAskTheAuntGeneralQuestion && askTheAuntWantsExtraChats && askTheAuntExtraFiles.length === 0) {
+      setAskTheAuntError('סמנו לפחות קובץ אחד, או בחרו להמשיך רק עם הצ׳אט המקורי.');
+      return;
+    }
+
+    setAskTheAuntError(null);
+    setIsAskTheAuntSubmitting(true);
+    if (authUser) {
+      trackAnalysis(AnalysisType.ASK_AUNT, authUser.uid);
+    }
+
+    try {
+      const extraParsedChats: ParsedChat[] = [];
+
+      if (!isAskTheAuntGeneralQuestion && askTheAuntWantsExtraChats) {
+        for (const file of askTheAuntExtraFiles) {
+          const fileText = await readChatUploadFile(file, MAX_FILE_SIZE_BYTES);
+          const parsedChat = await parseChatFile(fileText);
+          extraParsedChats.push(parsedChat);
+        }
+      }
+
+      const askContext = buildAskTheAuntContext(targetDisplayName, extraParsedChats);
+      if (targetDisplayName) {
+        setSelectedUser(targetDisplayName);
+      }
+      setShowAskTheAuntModal(false);
+      setLoading(true);
+      setActiveAnalysisType(AnalysisType.ASK_AUNT);
+      setActiveAskTheAuntResultKey(resultKey);
+      setCurrentLoadingSnippet(getNextHighlight());
+
+      const response = await fetch('/api/ask-the-aunt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatSections: askContext.chatSections,
+          targetUser: askContext.targetUser,
+          question: trimmedQuestion
+        })
+      });
+
+      const responseData = await response.json();
+      if (!response.ok) {
+        throw new Error(responseData.error || await getApiErrorMessage(response, 'Analysis failed'));
+      }
+
+      const answer = PRIVACY_DISCLAIMER_TEXT + deanonymizeText(responseData.result || '', askContext.reverseMap);
+      setUserAnalysisData((previousData) => ({
+        ...previousData,
+        [resultKey]: {
+          ...(previousData[resultKey] || {}),
+          [AnalysisType.ASK_AUNT]: answer
+        }
+      }));
+
+      setAskTheAuntQuestion('');
+      setAskTheAuntWantsExtraChats(false);
+      setAskTheAuntExtraFiles([]);
+      setAskTheAuntError(null);
+      if (targetDisplayName) {
+        setAskTheAuntTargetUser(targetDisplayName);
+      }
+    } catch (error: any) {
+      logClientError('Ask the Aunt analysis failed', error, {
+        userId: authUser?.uid,
+        selectedUser: targetDisplayName || undefined,
+        chatCode,
+        action: 'askTheAunt'
+      });
+      setActiveAnalysisType(null);
+      setShowAskTheAuntModal(true);
+      setAskTheAuntError(getClientErrorMessage(error));
+    } finally {
+      setLoading(false);
+      setIsAskTheAuntSubmitting(false);
+    }
+  };
+
+  const runAnalysis = async (type: AnalysisType, participants?: string[], bypassCache: boolean = false) => {
+    logButton(type);
+
+    // Allow guest analysis during local testing; only track identified users.
+    if (authUser) {
+      trackAnalysis(type, authUser.uid);
+    }
+
+    await executeAnalysis(type, participants, bypassCache);
+  };
+
   const handleOpenPromoCodeModal = () => {
     setShowPromoCodeModal(true);
   };
@@ -252,50 +745,9 @@ export default function HomePage() {
   };
 
   const storeChat = async (text: string) => {
-    if (!authUser) return null; // Guest users don't need to store chat
-    try {
-      // Generate hash on client-side to avoid sending large data to server
-      const chatCode = await generateChatCodeClient(text);
-      if (!chatCode) {
-        throw new Error('Failed to generate chat code');
-      }
-      
-      const data = await uploadChatAction(authUser.uid, chatCode, text.length, isNewSessionMode);
-      if (data.code) {
-        // Always reset cached outputs first to ensure state is clean
-        setCachedOutputs({});
-        setChatCode(data.code);
-        
-        // Load existing outputs separately if they exist
-        if (data.hasExistingOutputs && !isNewSessionMode) {
-          loadCachedOutputsAction(authUser.uid, data.code).then(result => {
-            if (result.success && result.outputs) {
-              // Wrap outputs in expected format { output, timestamp }
-              const wrappedOutputs: any = {};
-              for (const [key, value] of Object.entries(result.outputs)) {
-                wrappedOutputs[key] = {
-                  output: value,
-                  timestamp: new Date().toISOString()
-                };
-              }
-              setCachedOutputs(wrappedOutputs);
-            }
-          }).catch(e => {
-            console.error("Failed to load cached outputs", e);
-          });
-        }
-        
-        return data.code;
-      }
-    } catch (e: any) { 
-      console.error("Store chat failed", e);
-      if (e.message && (e.message.includes('גדול מדי') || e.message.includes('too large'))) {
-        alert(`⚠️ ${e.message}\n\n💡 טיפ: ייצא את הצ'אט מוואטסאפ עם תקופה קצרה יותר (למשל, 3-6 חודשים אחרונים).`);
-      } else {
-        alert(`❌ שגיאה בשמירת הצ'אט\n\n${e.message || 'שגיאה לא ידועה. נסה שוב.'}`);
-      }
-      throw e;
-    }
+    // Chat inputs and analysis outputs are intentionally kept out of persistent storage.
+    setCachedOutputs({});
+    setChatCode(null);
     return null;
   };
 
@@ -338,6 +790,10 @@ export default function HomePage() {
     setHighlights([]);
     usedHighlightIndicesRef.current.clear();
     setSessionId(null); // Reset session on new file
+    setUploadedWordCount(0);
+    setAnalysisDepthMode(null);
+    setShowLongChatChoiceModal(false);
+    setPendingLongChatAnalysis(null);
     // Don't reset chatCode and cachedOutputs here - let storeChat handle it
 
     try {
@@ -348,11 +804,13 @@ export default function HomePage() {
         return;
       }
 
+      const totalWordCount = getTotalWordCount(parsed.anonymizedMessages);
+
       let lastDate = "";
       let lastSender = "";
 
       let formattedAnonymizedText = parsed.anonymizedMessages.map(m => {
-        const dateStr = m.date.toLocaleDateString('en-GB'); // d/m/y
+        const dateStr = formatChatDate(m.date);
         let line = "";
 
         // Rule 5: Only keep the first date of every day
@@ -417,10 +875,12 @@ export default function HomePage() {
         return txt;
       };
 
-      const metadata = await getChatMetadata(parsed.anonymizedMessages);
+      const metadata = await getChatMetadata(parsed.loadingPreviewMessages);
       if (metadata.highlights) setHighlights(metadata.highlights.map(deanonymize));
 
       setChatData(parsed);
+      setUploadedWordCount(totalWordCount);
+      setAnalysisDepthMode(null);
       setSelectedUser(null);
       setUserAnalysisData({});
       setActiveAnalysisType(null);
@@ -441,6 +901,21 @@ export default function HomePage() {
     }
   };
 
+  const handlePastedTextSubmit = async () => {
+    const normalizedText = pastedChatText.trim();
+    if (!normalizedText) {
+      alert("הדביקו כאן טקסט של צ'אט כדי להתחיל בניתוח.");
+      return;
+    }
+
+    await handleFileLoaded(normalizedText);
+  };
+
+  const focusPasteInput = () => {
+    pastedChatInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    pastedChatInputRef.current?.focus();
+  };
+
   const getNextHighlight = () => {
     if (highlights.length === 0) return "מעבד את הנתונים באופן אנונימי...";
     const available = highlights.map((_, i) => i).filter(i => !usedHighlightIndicesRef.current.has(i));
@@ -452,14 +927,14 @@ export default function HomePage() {
   // Helper to check if cache exists for this analysis
   const getCacheKey = (type: AnalysisType, participants?: string[]): string => {
     if (type === AnalysisType.GROUP_DYNAMICS) {
-      return createGroupDynamicsCacheKey(participants);
+      return buildCacheKey(createGroupDynamicsCacheKey(participants, selectedTier));
     }
     if (type === AnalysisType.ROMANTIC_DYNAMICS) {
-      return 'romantic_dynamics'; // Already safe, no special chars
+      return buildCacheKey(createRomanticDynamicsCacheKey(selectedTier));
     }
     if (selectedUser && chatData) {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
-      return createFullAnalysisCacheKey(anonUser);
+      return buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier));
     }
     return '';
   };
@@ -467,6 +942,7 @@ export default function HomePage() {
   // Execute analysis with optional cache bypass
   const executeAnalysis = async (type: AnalysisType, participants?: string[], bypassCache: boolean = false) => {
     if (!chatData) return;
+    const requestedAnalysisMode = getRequestedAnalysisMode();
 
     if (type === AnalysisType.GROUP_DYNAMICS) {
       setLoading(true);
@@ -477,14 +953,17 @@ export default function HomePage() {
         const limit = Infinity;
         
         // Check cache for group dynamics
-        const cacheKey = createGroupDynamicsCacheKey(participants);
+        const cacheKey = buildCacheKey(createGroupDynamicsCacheKey(participants, selectedTier));
         
         let result = "";
         let strategy: 'full' | 'sampled' | undefined;
         let originalWordCount: number | undefined;
         
-        if (!bypassCache && cachedOutputs[cacheKey]) {
-            result = cachedOutputs[cacheKey].output;
+        const cachedGroupOutput = cachedOutputs[cacheKey]?.output;
+        const canUseCachedGroupOutput = !bypassCache && hasParticipantAxisSection(cachedGroupOutput);
+
+        if (canUseCachedGroupOutput) {
+            result = cachedGroupOutput;
             strategy = cachedOutputs[cacheKey].strategy;
             originalWordCount = cachedOutputs[cacheKey].originalWordCount;
         } else {
@@ -494,12 +973,14 @@ export default function HomePage() {
               body: JSON.stringify({
                 messages: chatData.anonymizedMessages,
                 selectedParticipants: participants,
-                limit
+                limit,
+                tier: selectedTier,
+                analysisMode: requestedAnalysisMode
               })
             });
-            
+             
             if (!response.ok) {
-              throw new Error(`Analysis failed: ${response.statusText}`);
+              throw new Error(await getApiErrorMessage(response, 'Analysis failed'));
             }
             
             const analysisResult = await response.json();
@@ -554,7 +1035,7 @@ export default function HomePage() {
         const limit = Infinity;
         
         // Check cache
-        const cacheKey = 'romantic_dynamics';
+        const cacheKey = buildCacheKey(createRomanticDynamicsCacheKey(selectedTier));
         let result = "";
         if (!bypassCache && cachedOutputs[cacheKey]) {
             result = cachedOutputs[cacheKey].output;
@@ -564,12 +1045,14 @@ export default function HomePage() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 messages: chatData.anonymizedMessages,
-                limit
+                limit,
+                tier: selectedTier,
+                analysisMode: requestedAnalysisMode
               })
             });
-            
+             
             if (!response.ok) {
-              throw new Error(`Analysis failed: ${response.statusText}`);
+              throw new Error(await getApiErrorMessage(response, 'Analysis failed'));
             }
             
             const responseData = await response.json();
@@ -628,7 +1111,7 @@ export default function HomePage() {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
       
       // Check cache for full analysis
-      const cacheKey = createFullAnalysisCacheKey(anonUser);
+      const cacheKey = buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier));
       let rawResult: any = {};
       let strategy: 'full' | 'sampled' | undefined;
       let originalWordCount: number | undefined;
@@ -644,12 +1127,14 @@ export default function HomePage() {
             body: JSON.stringify({
               messages: chatData.anonymizedMessages,
               targetUser: anonUser,
-              limit
+              limit,
+              tier: selectedTier,
+              analysisMode: requestedAnalysisMode
             })
           });
           
           if (!response.ok) {
-            throw new Error(`Analysis failed: ${response.statusText}`);
+            throw new Error(await getApiErrorMessage(response, 'Analysis failed'));
           }
           
           const analysisResult = await response.json();
@@ -709,28 +1194,28 @@ export default function HomePage() {
   };
 
   const triggerAnalysis = async (type: AnalysisType, participants?: string[]) => {
-    // Require login for AI analysis generation
-    if (!authUser) {
-      alert('יש להתחבר כדי ליצור ניתוח AI. אנא התחבר או הירשם כדי להמשיך.');
-      router.push('/login');
+    if (!chatData) return;
+
+    if (type === AnalysisType.ASK_AUNT) {
+      await logButton('ASK_AUNT_INIT');
+      handleOpenAskTheAuntModal('person');
       return;
     }
 
-    logButton(type);
-    
-    // Track analysis start in Mixpanel
-    trackAnalysis(type, authUser.uid);
-    
-    if (!chatData) return;
+    if (isPaidLongChat && !analysisDepthMode) {
+      setPendingLongChatAnalysis({ type, participants });
+      setShowLongChatChoiceModal(true);
+      return;
+    }
 
     // Always execute with existing cache (bypassCache: false)
     // User can regenerate from within the modal if they want
-    await executeAnalysis(type, participants, false);
+    await runAnalysis(type, participants, false);
   };
 
   const handleUseExistingAnalysis = () => {
     if (pendingAnalysis) {
-      executeAnalysis(pendingAnalysis.type, pendingAnalysis.participants, false);
+      runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, false);
     }
     setShowRegenerateConfirm(false);
     setPendingAnalysis(null);
@@ -772,7 +1257,7 @@ export default function HomePage() {
       }
       
       // Now execute analysis with cache bypass
-      executeAnalysis(pendingAnalysis.type, pendingAnalysis.participants, true);
+      runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, true);
     }
     setShowRegenerateConfirm(false);
     setPendingAnalysis(null);
@@ -781,6 +1266,22 @@ export default function HomePage() {
   const handleCloseRegenerateModal = () => {
     setShowRegenerateConfirm(false);
     setPendingAnalysis(null);
+  };
+
+  const handleCloseLongChatChoiceModal = () => {
+    setShowLongChatChoiceModal(false);
+    setPendingLongChatAnalysis(null);
+  };
+
+  const handleChooseLongChatAnalysisMode = async (mode: AnalysisDepthMode) => {
+    setAnalysisDepthMode(mode);
+    setShowLongChatChoiceModal(false);
+
+    if (pendingLongChatAnalysis) {
+      const analysisToRun = pendingLongChatAnalysis;
+      setPendingLongChatAnalysis(null);
+      await runAnalysis(analysisToRun.type, analysisToRun.participants, false);
+    }
   };
 
   useEffect(() => {
@@ -841,6 +1342,10 @@ export default function HomePage() {
     if (!activeAnalysisType) return "";
     if (activeAnalysisType === AnalysisType.GROUP_DYNAMICS) return userAnalysisData['GROUP']?.content || "";
     if (activeAnalysisType === AnalysisType.ROMANTIC_DYNAMICS) return userAnalysisData['ROMANTIC']?.content || "";
+    if (activeAnalysisType === AnalysisType.ASK_AUNT) {
+      const resultKey = activeAskTheAuntResultKey || selectedUser || ASK_AUNT_GENERAL_RESULT_KEY;
+      return userAnalysisData[resultKey]?.[AnalysisType.ASK_AUNT] || "";
+    }
     if (!selectedUser) return "";
     return userAnalysisData[selectedUser]?.[activeAnalysisType] || "";
   };
@@ -848,6 +1353,7 @@ export default function HomePage() {
   if (isProcessingFile) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
+        {renderPaidTierBadge('top-16 left-4')}
         <button 
           onClick={() => router.push('/admin/prompts')} 
           className="fixed top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer"
@@ -895,10 +1401,11 @@ export default function HomePage() {
   if (!chatData) {
     return (
       <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 overflow-x-hidden relative">
+        {renderPaidTierBadge()}
         <AuthDetails />
 
         {/* Top Header Bar for Profile/Admin - Only when logged in */}
-        {authUser && (
+        {hasVisibleAuthSession && (
           <div className="absolute top-0 left-0 right-0 z-50 px-4 py-2 sm:py-4 flex justify-end items-center gap-2">
             {isAdmin && (
               <button
@@ -934,9 +1441,9 @@ export default function HomePage() {
            
            <div className="max-w-5xl mx-auto px-4 relative z-10">
               <div 
-                onClick={() => authUser && router.push('/profile')}
-                className={`inline-flex items-center justify-center p-1 bg-white/60 backdrop-blur-md rounded-full mb-8 shadow-xl animate-bounce-slow ring-4 ring-teal-100/50 ${authUser ? 'cursor-pointer hover:ring-indigo-200 hover:scale-105 transition-all' : ''}`}
-                title={authUser ? 'הפרופיל שלי' : ''}
+                onClick={() => hasVisibleAuthSession && router.push('/profile')}
+                className={`inline-flex items-center justify-center p-1 bg-white/60 backdrop-blur-md rounded-full mb-8 shadow-xl animate-bounce-slow ring-4 ring-teal-100/50 ${hasVisibleAuthSession ? 'cursor-pointer hover:ring-indigo-200 hover:scale-105 transition-all' : ''}`}
+                title={hasVisibleAuthSession ? 'הפרופיל שלי' : ''}
               >
                  <img src={LOGO_URL} className="w-24 h-24 rounded-full border-4 border-white shadow-sm" />
               </div>
@@ -947,8 +1454,104 @@ export default function HomePage() {
               
               <HowToExport />
 
-              <div className="max-w-xl mx-auto bg-white/80 backdrop-blur-sm p-6 rounded-3xl shadow-xl border border-white/50 transform hover:scale-[1.02] transition-transform duration-300">
-                 <FileUpload onFileLoaded={handleFileLoaded} />
+              <div className="max-w-6xl mx-auto bg-white/80 backdrop-blur-sm p-6 rounded-3xl shadow-xl border border-white/50 transform hover:scale-[1.02] transition-transform duration-300">
+                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-stretch">
+                    <div className="h-full">
+                      <FileUpload onFileLoaded={handleFileLoaded} />
+                    </div>
+
+                    <div className="flex flex-col justify-between rounded-3xl border border-teal-100 bg-gradient-to-br from-white via-teal-50/70 to-cyan-50/80 p-5 shadow-sm">
+                      <div className="text-right">
+                        <div className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 text-xs font-bold text-teal-700 shadow-sm mb-4">
+                          <FileText className="w-4 h-4" />
+                          אפשר גם להדביק טקסט
+                        </div>
+
+                        <h3 className="text-2xl font-black text-slate-800 mb-3">
+                          הדביקו כאן צ'אט טקסטואלי
+                        </h3>
+
+                        <p className="text-sm text-slate-600 leading-7 mb-4">
+                          אם יש לכם צ'אטים טקסטואליים, אפשר פשוט להעתיק ולהדביק אותם כאן.
+                          אנחנו ממליצים להעלות שיחות ודיונים ארוכים, כי הם מספקים את המשוב הטוב ביותר.
+                        </p>
+                      </div>
+
+                      <textarea
+                        ref={pastedChatInputRef}
+                        value={pastedChatText}
+                        onChange={(e) => setPastedChatText(e.target.value)}
+                        placeholder={"הדביקו כאן את תוכן הצ'אט...\n\nדוגמה:\n[20/03/2026, 10:15] דנה: מה קורה?\n[20/03/2026, 10:16] יעל: הכל טוב, מה איתך?"}
+                        className="min-h-[250px] w-full rounded-2xl border border-white/80 bg-white/90 px-4 py-4 text-sm leading-7 text-slate-700 shadow-inner focus:outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-300 resize-none"
+                        dir="rtl"
+                      />
+
+                      <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <p className="text-xs text-slate-500 text-right">
+                          מתאים במיוחד לצ'אטים שכבר זמינים לכם כטקסט מוכן להעתקה.
+                        </p>
+
+                        <button
+                          onClick={handlePastedTextSubmit}
+                          disabled={isProcessingFile || !pastedChatText.trim()}
+                          className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold shadow-md transition-all ${
+                            isProcessingFile || !pastedChatText.trim()
+                              ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                              : 'bg-gradient-to-r from-teal-600 to-cyan-600 text-white hover:from-teal-700 hover:to-cyan-700 active:scale-95'
+                          }`}
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          נתח טקסט מודבק
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col justify-between rounded-3xl border border-indigo-100 bg-gradient-to-br from-white via-indigo-50/80 to-sky-50 p-5 shadow-sm">
+                      <div className="text-right">
+                        <div className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 text-xs font-bold text-indigo-700 shadow-sm mb-4">
+                          <Hash className="w-4 h-4" />
+                          העלאה מ-Slack
+                        </div>
+
+                        <h3 className="text-2xl font-black text-slate-800 mb-3">
+                          הביאו טקסט מערוץ Slack
+                        </h3>
+
+                        <p className="text-sm text-slate-600 leading-7 mb-4">
+                          אם יש לכם גישה לניהול הערוץ, אפשר לייצא את היסטוריית ההודעות מ-Slack,
+                          להעתיק את הטקסט ולנתח אותו כאן.
+                        </p>
+
+                        <div className="rounded-2xl border border-white/70 bg-white/80 p-4 text-sm text-slate-600 space-y-3 leading-7">
+                          <p>
+                            1. פתחו את הערוץ הרלוונטי ב-Slack.
+                          </p>
+                          <p>
+                            2. אם יש לכם הרשאות מתאימות, ייצאו את ההודעות או העתיקו את היסטוריית הערוץ.
+                          </p>
+                          <p>
+                            3. אם האפשרות הזו לא זמינה, וזה בדרך כלל המצב למי שאינו אדמין בערוץ,
+                            פשוט העתיקו את כל הטקסט ידנית והדביקו אותו בתיבת הטקסט שליד.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-col gap-3">
+                        <p className="text-xs text-slate-500 text-right">
+                          ברוב הארגונים ייצוא מסלאק דורש הרשאות ניהול, לכן תיבת ההדבקה היא החלופה המהירה ביותר.
+                        </p>
+
+                        <button
+                          onClick={focusPasteInput}
+                          className="inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold shadow-md transition-all bg-gradient-to-r from-indigo-600 to-sky-600 text-white hover:from-indigo-700 hover:to-sky-700 active:scale-95"
+                        >
+                          <FileText className="w-4 h-4" />
+                          מעבר לתיבת ההדבקה
+                        </button>
+                      </div>
+                    </div>
+                 </div>
+
                  <p className="text-xs text-slate-400 mt-3 flex items-center justify-center gap-1">
                     <Shield className="w-3 h-3" />
                     הפרטיות מובטחת: הניתוח מתבצע באופן אנונימי לחלוטין
@@ -996,6 +1599,58 @@ export default function HomePage() {
                       כדי לקבל את התוצאות המעמיקות והמדויקות ביותר, מומלץ להעלות צ'אטים ארוכים יותר, בהם אנשים מרגישים בנוח לחשוף רגשות אמיתיים - כמו קבוצות משפחתיות או חברים קרובים. עם זאת, גם שיחות פרטיות בין שני אנשים יכולות לחשוף תובנות מדהימות. אל תהססו, פשוט נסו!
                   </p>
               </div>
+          </div>
+        </div>
+
+        <div className="max-w-6xl mx-auto px-4 pb-16 -mt-4" dir="rtl">
+          <div className="relative overflow-hidden rounded-[2rem] border border-teal-100/80 bg-gradient-to-br from-white via-teal-50/70 to-cyan-50/80 p-8 shadow-[0_28px_80px_-45px_rgba(15,23,42,0.28)]">
+            <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-cyan-200/30 blur-3xl" />
+            <div className="absolute -left-12 bottom-0 h-36 w-36 rounded-full bg-teal-200/20 blur-3xl" />
+
+            <div className="relative z-10">
+              <div className="mb-8 text-center">
+                <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/85 px-4 py-1.5 text-xs font-bold text-teal-700 shadow-sm mb-4">
+                  <Shield className="w-4 h-4" />
+                  פרטיות לפני הכל
+                </div>
+                <h2 className="text-3xl md:text-4xl font-black text-slate-900 mb-3">למה הדודה שומרת עליכם טוב יותר</h2>
+                <p className="text-slate-600 max-w-3xl mx-auto leading-7">
+                  בנינו את החוויה כך שהצ&apos;אט שלכם ייחשף כמה שפחות, ושגם כשנעזרים ב-AI, המידע האישי שלכם יישאר מוגן ככל האפשר.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div className="rounded-3xl border border-white/80 bg-white/90 p-6 shadow-lg shadow-teal-100/60">
+                  <div className="w-14 h-14 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center mb-5">
+                    <FileText className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 mb-3">קובץ המקור לא נשמר כקובץ בענן</h3>
+                  <p className="text-slate-600 leading-7 text-sm">
+                    קובץ ה-WhatsApp או הטקסט שאתם מעלים לא נשמר אצלנו כקובץ גולמי בענן. הוא משמש לפענוח ולניתוח, בלי להחזיק עותק מקורי של הקובץ עצמו בשרת.
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-white/80 bg-white/90 p-6 shadow-lg shadow-cyan-100/60">
+                  <div className="w-14 h-14 rounded-2xl bg-cyan-100 text-cyan-700 flex items-center justify-center mb-5">
+                    <Lock className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 mb-3">ה-AI לא רואה את השמות האמיתיים שלכם</h3>
+                  <p className="text-slate-600 leading-7 text-sm">
+                    לפני שהטקסט נשלח למנוע הבינה המלאכותית, הוא עובר אנונימיזציה: השמות מוחלפים בקודים כמו P1 ו-P2. רק אחרי שהניתוח חוזר, השמות מוצמדים מחדש בתצוגה למשתמש.
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-white/80 bg-white/90 p-6 shadow-lg shadow-sky-100/60">
+                  <div className="w-14 h-14 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center mb-5">
+                    <Shield className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 mb-3">לא משתפים את המידע שלכם עם אף אחד</h3>
+                  <p className="text-slate-600 leading-7 text-sm">
+                    אנחנו לא מעבירים את המידע שלכם לאף גורם חיצוני למעט מנוע ה-AI שמבצע את הניתוח על גרסה אנונימית. לצורכי שימוש שוטף עשויים להישמר מטא-דאטה ותוצרי ניתוח בחשבון שלכם, אבל לא עותק מקורי של קובץ הצ&apos;אט.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1223,17 +1878,18 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
+      {renderPaidTierBadge('top-20 left-4')}
       <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
          <div 
-           onClick={() => authUser && router.push('/profile')}
-           className={`flex items-center gap-3 ${authUser ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-           title={authUser ? 'הפרופיל שלי' : ''}
+           onClick={() => hasVisibleAuthSession && router.push('/profile')}
+           className={`flex items-center gap-3 ${hasVisibleAuthSession ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+           title={hasVisibleAuthSession ? 'הפרופיל שלי' : ''}
          >
            <img src={LOGO_URL} className="w-10 h-10 rounded-full" />
            <h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1>
          </div>
          <div className="flex items-center gap-3">
-            {authUser && (
+            {hasVisibleAuthSession && (
               <>
                 {isAdmin && (
                   <button
@@ -1301,6 +1957,50 @@ export default function HomePage() {
               </div>
            </button>
 
+           <div className="max-w-4xl mx-auto mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+             <button
+               onClick={() => handleOpenAskTheAuntModal('person')}
+               className="group relative overflow-hidden rounded-[2rem] border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-sky-50 p-6 text-right shadow-lg shadow-cyan-100/60 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-cyan-200/70 cursor-pointer"
+             >
+               <div className="absolute -left-14 -top-14 h-32 w-32 rounded-full bg-cyan-200/40 blur-3xl transition-opacity duration-300 group-hover:opacity-100" />
+               <div className="relative z-10 flex items-start justify-between gap-4">
+                 <div className="rounded-2xl bg-cyan-100 p-4 text-cyan-700 transition-transform duration-300 group-hover:scale-110">
+                   <Search className="w-7 h-7" />
+                 </div>
+                 <div className="text-right">
+                   <div className="inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold text-cyan-700 border border-cyan-100 mb-3">
+                     שאל את הדודה
+                   </div>
+                   <h3 className="text-2xl font-black text-slate-900 mb-2">שאל על אדם מסוים</h3>
+                   <p className="text-slate-600 leading-7">
+                     בחרו משתתף מהצ׳אט, שאלו שאלה אחת ממוקדת, ואפשר גם לצרף עד 3 צ׳אטים נוספים כדי לדייק את התשובה.
+                   </p>
+                 </div>
+               </div>
+             </button>
+
+             <button
+               onClick={() => handleOpenAskTheAuntModal('general')}
+               className="group relative overflow-hidden rounded-[2rem] border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-slate-50 p-6 text-right shadow-lg shadow-indigo-100/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-indigo-200/70 cursor-pointer"
+             >
+               <div className="absolute -right-12 -bottom-14 h-32 w-32 rounded-full bg-indigo-200/40 blur-3xl transition-opacity duration-300 group-hover:opacity-100" />
+               <div className="relative z-10 flex items-start justify-between gap-4">
+                 <div className="rounded-2xl bg-indigo-100 p-4 text-indigo-700 transition-transform duration-300 group-hover:scale-110">
+                   <FileText className="w-7 h-7" />
+                 </div>
+                 <div className="text-right">
+                   <div className="inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold text-indigo-700 border border-indigo-100 mb-3">
+                     שאל את הדודה
+                   </div>
+                   <h3 className="text-2xl font-black text-slate-900 mb-2">שאל שאלה כללית</h3>
+                   <p className="text-slate-600 leading-7">
+                     שאלו שאלה על כל הקובץ. במסלול הזה הדודה תסתמך רק על הצ׳אט שכבר העליתם, בלי להציג אפשרות לצרף קבצים נוספים.
+                   </p>
+                 </div>
+               </div>
+             </button>
+           </div>
+
            <h2 className="text-2xl font-bold text-slate-800 mt-12 mb-6">או בחר משתתף ספציפי לניתוח אישי</h2>
            <div className="flex flex-wrap justify-center gap-3">
              {chatData.participants.map(p => (
@@ -1311,7 +2011,7 @@ export default function HomePage() {
 
         <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 max-w-6xl mx-auto transition-all duration-700 ${selectedUser ? 'opacity-100' : 'opacity-0 pointer-events-none translate-y-10'}`}>
            {Object.entries(ANALYSIS_CONFIG).map(([type, config], idx) => {
-             if (type === AnalysisType.GROUP_DYNAMICS || type === AnalysisType.ROMANTIC_DYNAMICS) return null;
+             if (type === AnalysisType.GROUP_DYNAMICS || type === AnalysisType.ROMANTIC_DYNAMICS || type === AnalysisType.ASK_AUNT) return null;
              
              return (
                <AnalysisCard 
@@ -1341,7 +2041,7 @@ export default function HomePage() {
         onShare={(platform) => logShare(activeAnalysisType || 'UNKNOWN', platform)}
         onLogImageGeneration={logImageGeneration}
         onLogFeedback={logFeedback}
-        onRegenerate={async () => {
+        onRegenerate={activeAnalysisType === AnalysisType.ASK_AUNT ? undefined : async () => {
           if (!activeAnalysisType) return;
           // For group analysis, use undefined (all participants)
           // For individual analysis, no participants needed
@@ -1402,6 +2102,25 @@ export default function HomePage() {
         />
       )}
 
+      <AskTheAuntModal
+        isOpen={showAskTheAuntModal}
+        mode={isAskTheAuntGeneralQuestion ? 'general' : 'person'}
+        participants={chatData.participants}
+        selectedTargetUser={askTheAuntTargetUser}
+        onSelectedTargetUserChange={setAskTheAuntTargetUser}
+        question={askTheAuntQuestion}
+        onQuestionChange={setAskTheAuntQuestion}
+        wantsExtraChats={askTheAuntWantsExtraChats}
+        onWantsExtraChatsChange={handleAskTheAuntWantsExtraChatsChange}
+        extraFiles={askTheAuntExtraFiles}
+        onExtraFilesSelected={handleAskTheAuntExtraFilesSelected}
+        onRemoveExtraFile={handleRemoveAskTheAuntFile}
+        onClose={handleCloseAskTheAuntModal}
+        onSubmit={handleAskTheAuntSubmit}
+        submitting={isAskTheAuntSubmitting}
+        errorMessage={askTheAuntError}
+      />
+
       <UpgradeModal
         isOpen={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
@@ -1416,6 +2135,13 @@ export default function HomePage() {
         onClose={handleCloseRegenerateModal}
         onUseExisting={handleUseExistingAnalysis}
         onGenerateNew={handleGenerateNewAnalysis}
+      />
+
+      <LongChatAnalysisChoiceModal
+        isOpen={showLongChatChoiceModal}
+        wordCount={uploadedWordCount}
+        onClose={handleCloseLongChatChoiceModal}
+        onChoose={handleChooseLongChatAnalysisMode}
       />
 
       {authUser && (
