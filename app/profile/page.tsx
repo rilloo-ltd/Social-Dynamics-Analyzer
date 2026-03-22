@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
+import { getStoredTestAuthEmail, logOut } from '@/lib/auth';
 import { LOGO_URL } from '@/lib/constants';
 import { 
   CreditCard, 
@@ -45,6 +46,7 @@ interface Transaction {
 export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [testAuthEmail, setTestAuthEmail] = useState<string | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,8 +57,24 @@ export default function ProfilePage() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) {
+        const storedTestAuthEmail = getStoredTestAuthEmail();
+
+        if (storedTestAuthEmail) {
+          setUser(null);
+          setTestAuthEmail(storedTestAuthEmail);
+          setUserData({
+            tier: 'super',
+            maxDailyUploads: 50,
+            uploadsToday: 0,
+          });
+          setTransactions([]);
+          setLoading(false);
+          return;
+        }
+
         router.push('/login');
       } else {
+        setTestAuthEmail(null);
         setUser(currentUser);
         fetchUserData(currentUser.uid);
       }
@@ -155,7 +173,7 @@ export default function ProfilePage() {
   };
 
   const handleLogout = async () => {
-    await auth.signOut();
+    await logOut();
     router.push('/');
   };
 
@@ -273,10 +291,10 @@ export default function ProfilePage() {
           <div className="mb-8 p-6 bg-gradient-to-r from-slate-50 to-slate-100 rounded-2xl" dir="rtl">
             <div className="flex items-center gap-4 mb-4">
               <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-                {user?.email?.charAt(0).toUpperCase()}
+                {(user?.email || testAuthEmail)?.charAt(0).toUpperCase()}
               </div>
               <div className="text-right flex-1">
-                <div className="text-lg font-bold text-slate-800">{user?.email}</div>
+                <div className="text-lg font-bold text-slate-800">{user?.email || testAuthEmail}</div>
                 <div className="text-sm text-slate-600">משתמש רשום</div>
               </div>
               {isAdmin && (

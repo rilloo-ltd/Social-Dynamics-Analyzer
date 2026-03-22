@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { messages, limit } = body;
+    const { messages, limit, tier, analysisMode } = body;
 
     if (!messages) {
       return NextResponse.json(
@@ -16,10 +16,12 @@ export async function POST(request: NextRequest) {
 
     logger.info('Romantic dynamics analysis started', {
       messageCount: messages.length,
-      limit
+      limit,
+      tier: tier || 'free',
+      analysisMode: analysisMode || 'default'
     });
 
-    const result = await serverAnalyzeRomanticDynamics(messages, limit || Infinity);
+    const result = await serverAnalyzeRomanticDynamics(messages, limit || Infinity, tier || 'free', analysisMode);
 
     return NextResponse.json(result);
   } catch (error) {

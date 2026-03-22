@@ -13,8 +13,9 @@ if (MIXPANEL_TOKEN) {
     ignore_dnt: true,
     // Reduce autocapture noise - only track major interactions
     autocapture: false, // Disable autocapture, track events manually
-    // Reduce session recording to 10% to avoid performance issues
-    record_sessions_percent: 10,
+    // Disable session recording so participant names and chat-derived UI content
+    // are not captured by a third-party analytics tool.
+    record_sessions_percent: 0,
     // Batch events to reduce requests
     batch_requests: true,
     batch_size: 50,

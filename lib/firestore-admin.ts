@@ -1,11 +1,57 @@
 import 'server-only';
 import { logger } from './logger';
 import { sanitizeCacheKey } from './cache-utils';
+import { ParticipantAxisDistributionSummary, ParticipantAxisKey, ParticipantAxisScore } from '@/types';
 
 // Server-side Firestore operations using Firebase Admin SDK
 // This file is for API routes and server actions
 
 // ============ ADMIN USERS ============
+const PRIVILEGED_SUPER_USER_EMAILS = new Set([
+  'sduppleganger@gmail.com',
+  'tester@gmail.com',
+]);
+const SUPER_TIER_UPLOAD_LIMIT = 50;
+
+function normalizeEmail(email?: string): string {
+  return (email || '').trim().toLowerCase();
+}
+
+function isPrivilegedSuperUserEmail(email?: string): boolean {
+  return PRIVILEGED_SUPER_USER_EMAILS.has(normalizeEmail(email));
+}
+
+function getAdminAuth() {
+  try {
+    const admin = require('firebase-admin');
+
+    if (!admin.apps.length) {
+      getAdminDb();
+    }
+
+    return admin.auth();
+  } catch (error) {
+    logger.warning('Error getting Firebase Admin auth', {}, error instanceof Error ? error : undefined);
+    return null;
+  }
+}
+
+async function getAuthUserEmail(userId: string): Promise<string | undefined> {
+  const adminAuth = getAdminAuth();
+
+  if (!adminAuth) {
+    return undefined;
+  }
+
+  try {
+    const userRecord = await adminAuth.getUser(userId);
+    return normalizeEmail(userRecord.email);
+  } catch (error) {
+    logger.warning('Error fetching auth user email', { userId }, error instanceof Error ? error : undefined);
+    return undefined;
+  }
+}
+
 /**
  * Check if a user is an admin with unlimited processing privileges
  * Admin status is stored in Firestore: users/{userId} with field isAdmin: true
@@ -87,6 +133,111 @@ export function getAdminDb() {
 // globalStats/
 //   - buttonPresses: { buttonId: count }
 //   - geminiUsage/{usageId}: { timestamp, inputTokens, outputTokens, model }
+//   - participantAxisSummary: anonymous score distributions per axis
+//
+// participantAxisObservations/{observationId}
+//   - liberalism, calmness, rationalism, humor, sourceType, createdAt
+
+const PARTICIPANT_AXIS_KEYS: ParticipantAxisKey[] = ['liberalism', 'calmness', 'rationalism', 'humor'];
+const PARTICIPANT_AXIS_MIN = 1;
+const PARTICIPANT_AXIS_MAX = 10;
+let inMemoryParticipantAxisSummary: ParticipantAxisDistributionSummary | null = null;
+
+function clampParticipantAxisScore(value: unknown): number {
+  const numericValue = Math.round(Number(value));
+
+  if (Number.isNaN(numericValue)) {
+    return 5;
+  }
+
+  return Math.min(PARTICIPANT_AXIS_MAX, Math.max(PARTICIPANT_AXIS_MIN, numericValue));
+}
+
+function createEmptyParticipantAxisBuckets(): Record<number, number> {
+  const buckets: Record<number, number> = {};
+
+  for (let score = PARTICIPANT_AXIS_MIN; score <= PARTICIPANT_AXIS_MAX; score++) {
+    buckets[score] = 0;
+  }
+
+  return buckets;
+}
+
+function buildParticipantAxisDistributionSummary(data?: any): ParticipantAxisDistributionSummary {
+  const axisBuckets = data?.axisBuckets || {};
+
+  return {
+    totalObservations: Number(data?.totalObservations || 0),
+    liberalism: PARTICIPANT_AXIS_KEYS.includes('liberalism')
+      ? Object.fromEntries(
+          Array.from({ length: PARTICIPANT_AXIS_MAX }, (_, index) => {
+            const score = index + PARTICIPANT_AXIS_MIN;
+            return [score, Number(axisBuckets?.liberalism?.[`s${score}`] || 0)];
+          })
+        )
+      : createEmptyParticipantAxisBuckets(),
+    calmness: PARTICIPANT_AXIS_KEYS.includes('calmness')
+      ? Object.fromEntries(
+          Array.from({ length: PARTICIPANT_AXIS_MAX }, (_, index) => {
+            const score = index + PARTICIPANT_AXIS_MIN;
+            return [score, Number(axisBuckets?.calmness?.[`s${score}`] || 0)];
+          })
+        )
+      : createEmptyParticipantAxisBuckets(),
+    rationalism: PARTICIPANT_AXIS_KEYS.includes('rationalism')
+      ? Object.fromEntries(
+          Array.from({ length: PARTICIPANT_AXIS_MAX }, (_, index) => {
+            const score = index + PARTICIPANT_AXIS_MIN;
+            return [score, Number(axisBuckets?.rationalism?.[`s${score}`] || 0)];
+          })
+        )
+      : createEmptyParticipantAxisBuckets(),
+    humor: PARTICIPANT_AXIS_KEYS.includes('humor')
+      ? Object.fromEntries(
+          Array.from({ length: PARTICIPANT_AXIS_MAX }, (_, index) => {
+            const score = index + PARTICIPANT_AXIS_MIN;
+            return [score, Number(axisBuckets?.humor?.[`s${score}`] || 0)];
+          })
+        )
+      : createEmptyParticipantAxisBuckets(),
+  };
+}
+
+function buildParticipantAxisBucketDocument(summary: ParticipantAxisDistributionSummary): Record<string, Record<string, number>> {
+  return Object.fromEntries(
+    PARTICIPANT_AXIS_KEYS.map((axis) => {
+      return [
+        axis,
+        Object.fromEntries(
+          Array.from({ length: PARTICIPANT_AXIS_MAX }, (_, index) => {
+            const score = index + PARTICIPANT_AXIS_MIN;
+            return [`s${score}`, Number(summary[axis][score] || 0)];
+          })
+        )
+      ];
+    })
+  );
+}
+
+function sanitizeParticipantAxisScores(scores: ParticipantAxisScore[]): ParticipantAxisScore[] {
+  const dedupedScores = new Map<string, ParticipantAxisScore>();
+
+  for (const score of scores || []) {
+    if (!score?.participantCode || typeof score.participantCode !== 'string') {
+      continue;
+    }
+
+    dedupedScores.set(score.participantCode, {
+      participantCode: score.participantCode,
+      liberalism: clampParticipantAxisScore(score.liberalism),
+      calmness: clampParticipantAxisScore(score.calmness),
+      rationalism: clampParticipantAxisScore(score.rationalism),
+      humor: clampParticipantAxisScore(score.humor),
+    });
+  }
+
+  return Array.from(dedupedScores.values());
+}
 
 // ============ UTILITY FUNCTIONS ============
 
@@ -132,75 +283,49 @@ export function generateChatCode(text: string): string {
 // ============ CHAT OPERATIONS ============
 
 export async function storeChat(userId: string, chatCode: string, textLength: number, clearOutputs: boolean = false) {
-  const db = getAdminDb();
-  
-  try {
-    // Don't store the full text to avoid Firestore 1MB document limit
-    // Only store metadata - the text stays in memory on the client
-    const data: any = {
-      code: chatCode,
-      textLength: textLength,
-      timestamp: new Date().toISOString()
-    };
-    
-    // Only set outputs to empty object if explicitly clearing or creating new
-    if (clearOutputs) {
-      data.outputs = {};
-    }
-    
-    await db.collection('users').doc(userId).collection('chats').doc(chatCode).set(
-      data,
-      { merge: true }  // Preserve existing fields unless explicitly overwritten
-    );
-    
-    logger.info('Chat metadata stored in Firestore', { userId, chatCode, textLength, clearOutputs });
-    return chatCode;
-  } catch (error) {
-    logger.error('Failed to store chat metadata in Firestore', {
-      userId,
-      chatCode,
-      chatCodeLength: chatCode.length,
-      textLength
-    }, error instanceof Error ? error : undefined);
-    throw error;
-  }
+  return chatCode;
 }
 
 export async function getChat(userId: string, chatCode: string) {
-  const db = getAdminDb();
-  
-  try {
-    const chatDoc = await db.collection('users').doc(userId).collection('chats').doc(chatCode).get();
-    
-    if (!chatDoc.exists) {
-      return null;
-    }
-    
-    return chatDoc.data();
-  } catch (error) {
-    logger.error('Failed to get chat from Firestore', {
-      userId,
-      chatCode,
-      chatCodeLength: chatCode.length
-    }, error instanceof Error ? error : undefined);
-    throw error;
-  }
+  return null;
 }
 
 export async function updateChatOutput(userId: string, chatCode: string, type: string, output: any) {
-  const db = getAdminDb();
-  
-  // Sanitize the cache key to ensure valid Firestore field path
-  const sanitizedType = sanitizeCacheKey(type);
-  
-  // Flatten the structure to avoid deep nesting issues
-  // Store output as JSON string if it's an object
-  const outputToStore = typeof output === 'string' ? output : JSON.stringify(output);
-  
-  await db.collection('users').doc(userId).collection('chats').doc(chatCode).update({
-    [`outputs.${sanitizedType}`]: outputToStore,
-    [`outputs.${sanitizedType}_timestamp`]: new Date().toISOString()
-  });
+  return;
+}
+
+export async function recordParticipantAxisScores(
+  scores: ParticipantAxisScore[],
+  sourceType: string
+): Promise<{ storedCount: number }> {
+  const sanitizedScores = sanitizeParticipantAxisScores(scores);
+
+  if (sanitizedScores.length === 0) {
+    return { storedCount: 0 };
+  }
+  const previousSummary = inMemoryParticipantAxisSummary || buildParticipantAxisDistributionSummary();
+  const nextSummary: ParticipantAxisDistributionSummary = {
+    totalObservations: previousSummary.totalObservations + sanitizedScores.length,
+    liberalism: { ...previousSummary.liberalism },
+    calmness: { ...previousSummary.calmness },
+    rationalism: { ...previousSummary.rationalism },
+    humor: { ...previousSummary.humor },
+  };
+
+  for (const score of sanitizedScores) {
+    PARTICIPANT_AXIS_KEYS.forEach((axis) => {
+      const axisScore = score[axis];
+      nextSummary[axis][axisScore] = (nextSummary[axis][axisScore] || 0) + 1;
+    });
+  }
+
+  inMemoryParticipantAxisSummary = nextSummary;
+
+  return { storedCount: sanitizedScores.length };
+}
+
+export async function getParticipantAxisDistributionSummary(): Promise<ParticipantAxisDistributionSummary> {
+  return inMemoryParticipantAxisSummary || buildParticipantAxisDistributionSummary();
 }
 
 // ============ UPLOAD TRACKING ============
@@ -324,13 +449,34 @@ export async function getUserTier(userId: string): Promise<{
   const db = getAdminDb();
   
   try {
-    const userDoc = await db.collection('users').doc(userId).get();
-    
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    const data = userDoc.exists ? userDoc.data() : undefined;
+    const resolvedEmail = normalizeEmail(data?.email) || await getAuthUserEmail(userId);
+
+    if (isPrivilegedSuperUserEmail(resolvedEmail)) {
+      const needsSync =
+        !userDoc.exists ||
+        data?.tier !== 'super' ||
+        data?.maxDailyUploads !== SUPER_TIER_UPLOAD_LIMIT ||
+        normalizeEmail(data?.email) !== resolvedEmail;
+
+      if (needsSync) {
+        await userRef.set({
+          tier: 'super',
+          maxDailyUploads: SUPER_TIER_UPLOAD_LIMIT,
+          updatedAt: new Date().toISOString(),
+          ...(resolvedEmail && { email: resolvedEmail })
+        }, { merge: true });
+      }
+
+      return { tier: 'super', maxDailyUploads: SUPER_TIER_UPLOAD_LIMIT };
+    }
+
     if (!userDoc.exists) {
       return { tier: 'free', maxDailyUploads: 2 };
     }
-    
-    const data = userDoc.data();
+
     return {
       tier: data?.tier || 'free',
       maxDailyUploads: data?.maxDailyUploads || 2
@@ -351,17 +497,20 @@ export async function ensureUserInitialized(userId: string, email?: string) {
   try {
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
+    const resolvedEmail = normalizeEmail(email) || await getAuthUserEmail(userId);
     
     if (!userDoc.exists) {
+      const isPrivilegedUser = isPrivilegedSuperUserEmail(resolvedEmail);
+
       // Create user document with defaults
       await userRef.set({
-        tier: 'free',
-        maxDailyUploads: 2,
+        tier: isPrivilegedUser ? 'super' : 'free',
+        maxDailyUploads: isPrivilegedUser ? SUPER_TIER_UPLOAD_LIMIT : 2,
         isAdmin: false,
         createdAt: new Date().toISOString(),
-        ...(email && { email })
+        ...(resolvedEmail && { email: resolvedEmail })
       });
-      logger.info('Initialized new user document', { userId, email: email || 'none' });
+      logger.info('Initialized new user document', { userId, email: resolvedEmail || 'none' });
     }
   } catch (error) {
     logger.warning('Error initializing user document', { userId }, error instanceof Error ? error : undefined);
@@ -811,4 +960,3 @@ export async function updateProductionPrompt(promptId: string, newContent: strin
     throw error;
   }
 }
-

@@ -103,6 +103,107 @@ const consolidateParticipants = (rawParticipants: string[]): Record<string, stri
  */
 const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
 
+type DateOrder = 'DMY' | 'MDY';
+
+const normalizeYear = (year: number): number => {
+  return year < 100 ? year + 2000 : year;
+};
+
+const isValidConstructedDate = (
+  date: Date,
+  year: number,
+  monthIndex: number,
+  day: number,
+  hours: number,
+  minutes: number,
+  seconds: number
+): boolean => {
+  return !Number.isNaN(date.getTime()) &&
+    date.getFullYear() === year &&
+    date.getMonth() === monthIndex &&
+    date.getDate() === day &&
+    date.getHours() === hours &&
+    date.getMinutes() === minutes &&
+    date.getSeconds() === seconds;
+};
+
+const detectDateOrder = (
+  lines: string[],
+  iosRegex: RegExp,
+  androidRegex: RegExp
+): DateOrder => {
+  let dmyEvidence = 0;
+  let mdyEvidence = 0;
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    const firstChar = line[0];
+    const isPotentialStart = firstChar === '[' || (firstChar >= '0' && firstChar <= '9');
+    if (!isPotentialStart) continue;
+
+    const match = line.match(iosRegex) || line.match(androidRegex);
+    if (!match) continue;
+
+    const dateParts = match[1].split(/[./-]/);
+    if (dateParts.length !== 3) continue;
+
+    const first = parseInt(dateParts[0], 10);
+    const second = parseInt(dateParts[1], 10);
+    if (Number.isNaN(first) || Number.isNaN(second)) continue;
+
+    if (first > 12 && second >= 1 && second <= 12) {
+      dmyEvidence++;
+    } else if (second > 12 && first >= 1 && first <= 12) {
+      mdyEvidence++;
+    }
+  }
+
+  return mdyEvidence > dmyEvidence ? 'MDY' : 'DMY';
+};
+
+const parseChatTimestamp = (dateStr: string, timeStr: string, preferredOrder: DateOrder): Date => {
+  const dateParts = dateStr.split(/[./-]/);
+  if (dateParts.length !== 3) {
+    return new Date();
+  }
+
+  const first = parseInt(dateParts[0], 10);
+  const second = parseInt(dateParts[1], 10);
+  let year = parseInt(dateParts[2], 10);
+
+  const timeParts = timeStr.split(':');
+  const hours = parseInt(timeParts[0], 10);
+  const minutes = parseInt(timeParts[1], 10);
+  const seconds = timeParts[2] ? parseInt(timeParts[2], 10) : 0;
+
+  if ([first, second, year, hours, minutes, seconds].some(Number.isNaN)) {
+    return new Date();
+  }
+
+  year = normalizeYear(year);
+
+  const orders: DateOrder[] = preferredOrder === 'DMY' ? ['DMY', 'MDY'] : ['MDY', 'DMY'];
+
+  for (const order of orders) {
+    const day = order === 'DMY' ? first : second;
+    const month = order === 'DMY' ? second : first;
+
+    if (day < 1 || day > 31 || month < 1 || month > 12) {
+      continue;
+    }
+
+    const monthIndex = month - 1;
+    const candidate = new Date(year, monthIndex, day, hours, minutes, seconds);
+
+    if (isValidConstructedDate(candidate, year, monthIndex, day, hours, minutes, seconds)) {
+      return candidate;
+    }
+  }
+
+  return new Date();
+};
+
 export const parseChatFile = async (text: string, onProgress?: (percent: number) => void): Promise<ParsedChat> => {
   const sanitizedRawText = sanitizeInput(text);
   const lines = sanitizedRawText.split('\n');
@@ -113,6 +214,8 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
   
   const iosRegex = /^\[(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}),?\s(\d{1,2}:\d{2}(?::\d{2})?)\]\s(.*?):\s?(.*)/;
   const androidRegex = /^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}),?\s(\d{1,2}:\d{2}(?::\d{2})?)(?:\s?(?:AM|PM|am|pm))?\s[\-–]\s(.*?):\s?(.*)/;
+
+  const detectedDateOrder = detectDateOrder(lines, iosRegex, androidRegex);
 
   const CHUNK_SIZE = 1000; // Reduced chunk size for better responsiveness
   const totalLines = lines.length;
@@ -161,19 +264,7 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
       }
       const strictName = fingerprintToName[fingerprint];
 
-      const dateParts = dateStr.split(/[./-]/);
-      let dateObj = new Date();
-      if (dateParts.length === 3) {
-        const day = parseInt(dateParts[0]);
-        const month = parseInt(dateParts[1]) - 1;
-        let year = parseInt(dateParts[2]);
-        if (year < 100) year += 2000;
-        const timeParts = timeStr.split(':');
-        const hours = parseInt(timeParts[0]);
-        const minutes = parseInt(timeParts[1]);
-        const seconds = timeParts[2] ? parseInt(timeParts[2]) : 0;
-        dateObj = new Date(year, month, day, hours, minutes, seconds);
-      }
+      const dateObj = parseChatTimestamp(dateStr, timeStr, detectedDateOrder);
 
       currentMessage = {
         date: dateObj,
@@ -236,6 +327,7 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
   const masterNameRegex = escapedNames.length > 0 ? new RegExp(escapedNames.join('|'), 'g') : null;
 
   const anonymizedMessages: ChatMessage[] = [];
+  const loadingPreviewMessages: ChatMessage[] = [];
   const totalMsgs = messages.length;
   
   for (let i = 0; i < totalMsgs; i++) {
@@ -267,14 +359,22 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
       });
     }
 
+    const anonymizedMessage = {
+      ...msg,
+      sender: nameMap[msg.sender], // sender is already merged at step 2
+      content: anonContent
+    };
+
+    // Keep a pre-optimization copy for the landing-page loading snippets.
+    loadingPreviewMessages.push(anonymizedMessage);
+
     // Rule 1: Trim excessive spaces around punctuation
     anonContent = anonContent
         .replace(/\s+([.,?!:;])/g, '$1') // Remove space before punctuation
         .replace(/([.,?!:;])\s+/g, '$1'); // Remove space after punctuation
 
     anonymizedMessages.push({
-      ...msg,
-      sender: nameMap[msg.sender], // sender is already merged at step 2
+      ...anonymizedMessage,
       content: anonContent
     });
   }
@@ -285,6 +385,7 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
     messages,
     participants: uniqueParticipants,
     anonymizedMessages,
+    loadingPreviewMessages,
     nameMap,
     reverseMap
   };

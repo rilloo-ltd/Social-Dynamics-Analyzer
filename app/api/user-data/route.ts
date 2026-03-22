@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminDb } from '@/lib/firestore-admin';
+import { getAdminDb, getUserTier } from '@/lib/firestore-admin';
 
 // Get Firebase Admin Auth
 function getAdminAuth() {
@@ -58,12 +58,14 @@ export async function GET(req: NextRequest) {
     // Get user data
     const userDoc = await db.collection('users').doc(userId).get();
     
+    const effectiveTier = await getUserTier(userId);
+
     if (!userDoc.exists) {
       return NextResponse.json({ 
         success: true, 
         userData: {
-          tier: 'free',
-          maxDailyUploads: 2
+          tier: effectiveTier.tier,
+          maxDailyUploads: effectiveTier.maxDailyUploads
         },
         transactions: []
       });
@@ -98,7 +100,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ 
       success: true,
-      userData,
+      userData: {
+        ...userData,
+        tier: effectiveTier.tier,
+        maxDailyUploads: effectiveTier.maxDailyUploads
+      },
       transactions,
       uploadsToday
     });

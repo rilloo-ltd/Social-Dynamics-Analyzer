@@ -1,31 +1,38 @@
 
 import React, { useEffect, useState } from "react";
 import { auth } from "../lib/firebase";
-import { logOut } from "../lib/auth";
+import { getStoredTestAuthEmail, logOut } from "../lib/auth";
 import { User } from "firebase/auth";
 import Link from "next/link";
 import { LogOut, UserCircle2, LogIn } from "lucide-react";
 
 const AuthDetails = () => {
     const [authUser, setAuthUser] = useState<User | null>(null);
+    const [testAuthEmail, setTestAuthEmail] = useState<string | null>(null);
 
     useEffect(() => {
         const listen = auth.onAuthStateChanged((user) => {
             if (user) {
                 setAuthUser(user);
+                setTestAuthEmail(null);
             } else {
                 setAuthUser(null);
+                setTestAuthEmail(getStoredTestAuthEmail());
             }
         });
+
+        setTestAuthEmail(getStoredTestAuthEmail());
 
         return () => {
             listen();
         };
     }, []);
 
+    const displayedEmail = authUser?.email || testAuthEmail;
+
     return (
         <div className="absolute top-2 right-2 sm:top-4 sm:right-4 text-right z-50">
-            {authUser ? (
+            {displayedEmail ? (
                 <div className="bg-white/80 backdrop-blur-md rounded-2xl shadow-lg border border-white/20 px-3 py-2 sm:px-4 sm:py-3 min-w-[160px] sm:min-w-[200px]">
                     <div className="flex items-center gap-2 sm:gap-3 mb-2">
                         <div className="flex-shrink-0">
@@ -36,7 +43,7 @@ const AuthDetails = () => {
                         <div className="flex-1 min-w-0">
                             <p className="text-[10px] sm:text-xs text-slate-500 font-medium">Signed in as</p>
                             <p className="text-xs sm:text-sm text-slate-800 font-semibold truncate">
-                                {authUser.email}
+                                {displayedEmail}
                             </p>
                         </div>
                     </div>
