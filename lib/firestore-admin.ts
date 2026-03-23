@@ -1,21 +1,25 @@
 import 'server-only';
 import { logger } from './logger';
 import { sanitizeCacheKey } from './cache-utils';
-import { ParticipantAxisDistributionSummary, ParticipantAxisKey, ParticipantAxisScore } from '@/types';
+import {
+  AdminAuditLogEntry,
+  AnalysisDepthMode,
+  ParticipantAxisDistributionSummary,
+  ParticipantAxisKey,
+  ParticipantAxisScore
+} from '@/types';
+import { ALLOWED_ADMIN_EMAIL, isAllowedAdminEmail, normalizeEmail } from './admin-identity';
 
 // Server-side Firestore operations using Firebase Admin SDK
 // This file is for API routes and server actions
 
 // ============ ADMIN USERS ============
 const PRIVILEGED_SUPER_USER_EMAILS = new Set([
-  'sduppleganger@gmail.com',
+  ALLOWED_ADMIN_EMAIL,
   'tester@gmail.com',
 ]);
+const FREE_TIER_TOTAL_UPLOAD_LIMIT = 3;
 const SUPER_TIER_UPLOAD_LIMIT = 50;
-
-function normalizeEmail(email?: string): string {
-  return (email || '').trim().toLowerCase();
-}
 
 function isPrivilegedSuperUserEmail(email?: string): boolean {
   return PRIVILEGED_SUPER_USER_EMAILS.has(normalizeEmail(email));
@@ -61,12 +65,17 @@ async function isAdminUser(userId: string): Promise<boolean> {
   
   try {
     const userDoc = await db.collection('users').doc(userId).get();
+    const userData = userDoc.exists ? userDoc.data() : undefined;
+    const resolvedEmail = normalizeEmail(userData?.email) || await getAuthUserEmail(userId);
     
+    if (isAllowedAdminEmail(resolvedEmail)) {
+      return true;
+    }
+
     if (!userDoc.exists) {
       return false;
     }
     
-    const userData = userDoc.data();
     return userData?.isAdmin === true;
   } catch (error) {
     logger.error('Error checking admin status', { userId }, error instanceof Error ? error : undefined);
@@ -76,6 +85,263 @@ async function isAdminUser(userId: string): Promise<boolean> {
 
 let adminInitialized = false;
 let adminDb: any = null;
+
+type AnalyticsEventStatus = 'started' | 'completed' | 'failed' | 'rejected' | 'submitted' | 'created' | 'updated';
+
+interface AnalyticsEventInput {
+  timestamp?: string;
+  category: string;
+  eventName: string;
+  status: AnalyticsEventStatus;
+  level?: 'info' | 'warning' | 'error';
+  userId?: string | null;
+  userEmail?: string | null;
+  sessionId?: string | null;
+  tier?: string | null;
+  analysisType?: string | null;
+  analysisMode?: AnalysisDepthMode | null;
+  model?: string | null;
+  endpoint?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  estimatedCostUsd?: number | null;
+  durationMs?: number | null;
+  errorCode?: string | null;
+  message?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+interface GeminiUsageLogInput {
+  timestamp?: string;
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  feature?: string | null;
+  userId?: string | null;
+  userEmail?: string | null;
+  sessionId?: string | null;
+  durationMs?: number | null;
+  endpoint?: string | null;
+  estimatedCostUsd?: number | null;
+}
+
+interface FeedbackLogInput {
+  userId: string;
+  sessionId: string;
+  rating: number;
+  comment: string;
+  analysisType?: string | null;
+  analysisMode?: AnalysisDepthMode | null;
+  tier?: string | null;
+  chatCode?: string | null;
+  timestamp?: string;
+}
+
+const ANALYTICS_COLLECTION = 'analyticsEvents';
+const FEEDBACK_COLLECTION = 'feedbackEntries';
+const ADMIN_AUDIT_COLLECTION = 'adminAuditLog';
+const ADMIN_DAILY_METRICS_COLLECTION = 'adminDailyMetrics';
+
+const GEMINI_MODEL_PRICING_USD_PER_MILLION: Record<
+  string,
+  { input: number | null; output: number | null }
+> = {
+  'gemini-3-flash-preview': {
+    input: Number(process.env.GEMINI_3_FLASH_INPUT_USD_PER_MILLION || 0.075),
+    output: Number(process.env.GEMINI_3_FLASH_OUTPUT_USD_PER_MILLION || 0.3),
+  },
+  'gemini-3-pro-preview': {
+    input: process.env.GEMINI_3_PRO_INPUT_USD_PER_MILLION
+      ? Number(process.env.GEMINI_3_PRO_INPUT_USD_PER_MILLION)
+      : null,
+    output: process.env.GEMINI_3_PRO_OUTPUT_USD_PER_MILLION
+      ? Number(process.env.GEMINI_3_PRO_OUTPUT_USD_PER_MILLION)
+      : null,
+  },
+};
+
+function getAdminFieldValue() {
+  const admin = require('firebase-admin');
+
+  if (!admin.apps.length) {
+    getAdminDb();
+  }
+
+  return admin.firestore.FieldValue;
+}
+
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
+}
+
+function roundUsd(value: number): number {
+  return Math.round(value * 1000000) / 1000000;
+}
+
+function getDateKey(timestamp?: string): string {
+  return (timestamp || new Date().toISOString()).split('T')[0];
+}
+
+export function estimateGeminiCostUsd(model: string, inputTokens: number, outputTokens: number): number | null {
+  const pricing = GEMINI_MODEL_PRICING_USD_PER_MILLION[model];
+
+  if (!pricing || pricing.input === null || pricing.output === null) {
+    return null;
+  }
+
+  return roundUsd(
+    (toFiniteNumber(inputTokens) * pricing.input) / 1_000_000 +
+    (toFiniteNumber(outputTokens) * pricing.output) / 1_000_000
+  );
+}
+
+async function mergeAdminDailyMetrics(
+  timestamp: string,
+  counters: Partial<Record<
+    | 'uploadsCount'
+    | 'uploadParticipantsTotal'
+    | 'uploadTokensTotal'
+    | 'buttonClicksCount'
+    | 'sharesCount'
+    | 'imageGenerationCount'
+    | 'feedbackCount'
+    | 'feedbackRatingSum'
+    | 'feedbackLowRatingCount'
+    | 'analysisStartedCount'
+    | 'analysisCompletedCount'
+    | 'analysisFailedCount'
+    | 'geminiInputTokens'
+    | 'geminiOutputTokens'
+    | 'geminiCostMicros'
+    | 'subscriptionActivatedCount'
+    | 'subscriptionCancelledCount'
+    | 'subscriptionRenewedCount'
+    | 'adminActionsCount',
+    number
+  >>
+) {
+  const entries = Object.entries(counters).filter(([, value]) => typeof value === 'number' && value !== 0);
+  if (entries.length === 0) {
+    return;
+  }
+
+  const FieldValue = getAdminFieldValue();
+  const dateKey = getDateKey(timestamp);
+  const updateData: Record<string, unknown> = {
+    date: dateKey,
+    updatedAt: new Date().toISOString(),
+  };
+
+  entries.forEach(([key, value]) => {
+    updateData[key] = FieldValue.increment(value);
+  });
+
+  await getAdminDb().collection(ADMIN_DAILY_METRICS_COLLECTION).doc(dateKey).set(updateData, { merge: true });
+}
+
+export async function recordAnalyticsEvent(event: AnalyticsEventInput): Promise<string> {
+  const db = getAdminDb();
+  const timestamp = event.timestamp || new Date().toISOString();
+
+  const eventRef = await db.collection(ANALYTICS_COLLECTION).add({
+    timestamp,
+    category: event.category,
+    eventName: event.eventName,
+    status: event.status,
+    level: event.level || (event.status === 'failed' ? 'error' : 'info'),
+    userId: event.userId || null,
+    userEmail: normalizeEmail(event.userEmail) || null,
+    sessionId: event.sessionId || null,
+    tier: event.tier || null,
+    analysisType: event.analysisType || null,
+    analysisMode: event.analysisMode || null,
+    model: event.model || null,
+    endpoint: event.endpoint || null,
+    inputTokens: typeof event.inputTokens === 'number' ? event.inputTokens : null,
+    outputTokens: typeof event.outputTokens === 'number' ? event.outputTokens : null,
+    estimatedCostUsd: typeof event.estimatedCostUsd === 'number' ? roundUsd(event.estimatedCostUsd) : null,
+    durationMs: typeof event.durationMs === 'number' ? event.durationMs : null,
+    errorCode: event.errorCode || null,
+    message: event.message || null,
+    metadata: event.metadata || {},
+  });
+
+  const dailyCounters: Partial<Record<
+    | 'analysisStartedCount'
+    | 'analysisCompletedCount'
+    | 'analysisFailedCount'
+    | 'subscriptionActivatedCount'
+    | 'subscriptionCancelledCount'
+    | 'subscriptionRenewedCount'
+    | 'adminActionsCount',
+    number
+  >> = {};
+
+  if (event.category === 'analysis') {
+    if (event.status === 'started') dailyCounters.analysisStartedCount = 1;
+    if (event.status === 'completed') dailyCounters.analysisCompletedCount = 1;
+    if (event.status === 'failed') dailyCounters.analysisFailedCount = 1;
+  }
+
+  if (event.category === 'payment') {
+    if (event.eventName === 'subscription_activated') dailyCounters.subscriptionActivatedCount = 1;
+    if (event.eventName === 'subscription_cancelled') dailyCounters.subscriptionCancelledCount = 1;
+    if (event.eventName === 'subscription_renewed') dailyCounters.subscriptionRenewedCount = 1;
+  }
+
+  if (event.category === 'admin') {
+    dailyCounters.adminActionsCount = 1;
+  }
+
+  await mergeAdminDailyMetrics(timestamp, dailyCounters);
+
+  return eventRef.id;
+}
+
+export async function recordAdminAuditLog(
+  actor: { email: string; userId?: string | null },
+  action: string,
+  target: { userId?: string | null; id?: string | null } = {},
+  details?: Record<string, unknown>
+): Promise<AdminAuditLogEntry> {
+  const timestamp = new Date().toISOString();
+  const docRef = await getAdminDb().collection(ADMIN_AUDIT_COLLECTION).add({
+    action,
+    actorEmail: normalizeEmail(actor.email),
+    actorUserId: actor.userId || null,
+    targetUserId: target.userId || null,
+    targetId: target.id || null,
+    timestamp,
+    details: details || {},
+  });
+
+  await recordAnalyticsEvent({
+    timestamp,
+    category: 'admin',
+    eventName: action,
+    status: 'updated',
+    userId: actor.userId || null,
+    userEmail: actor.email,
+    message: `Admin action: ${action}`,
+    metadata: {
+      targetUserId: target.userId || null,
+      targetId: target.id || null,
+      ...details,
+    },
+  });
+
+  return {
+    id: docRef.id,
+    action,
+    actorEmail: normalizeEmail(actor.email),
+    actorUserId: actor.userId || null,
+    targetUserId: target.userId || null,
+    targetId: target.id || null,
+    timestamp,
+    details,
+  };
+}
 
 export function getAdminDb() {
   if (adminInitialized) {
@@ -330,7 +596,7 @@ export async function getParticipantAxisDistributionSummary(): Promise<Participa
 
 // ============ UPLOAD TRACKING ============
 
-export async function checkDailyUploadLimit(userId: string, maxUploads: number = 2) {
+export async function checkDailyUploadLimit(userId: string, maxUploads: number = FREE_TIER_TOTAL_UPLOAD_LIMIT) {
   // Admin users have unlimited uploads
   if (await isAdminUser(userId)) {
     return { canUpload: true, currentCount: 0, remainingUploads: 999999 };
@@ -346,6 +612,20 @@ export async function checkDailyUploadLimit(userId: string, maxUploads: number =
   }
 
   const db = getAdminDb();
+
+  if (userTier.tier === 'free') {
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    const storedTotalUploads = Number(userDoc.data()?.totalUploadsUsed);
+    const currentCount = Number.isFinite(storedTotalUploads) ? storedTotalUploads : 0;
+
+    return {
+      canUpload: currentCount < effectiveMaxUploads,
+      currentCount,
+      remainingUploads: Math.max(0, effectiveMaxUploads - currentCount)
+    };
+  }
+
   const today = new Date().toISOString().split('T')[0];
   
   const statsDoc = await db.collection('users').doc(userId).collection('dailyStats').doc(today).get();
@@ -364,7 +644,7 @@ export async function checkDailyUploadLimit(userId: string, maxUploads: number =
   };
 }
 
-export async function incrementDailyUpload(userId: string, maxUploads: number = 2) {
+export async function incrementDailyUpload(userId: string, maxUploads: number = FREE_TIER_TOTAL_UPLOAD_LIMIT) {
   // Admin users bypass limits but we still track their uploads
   const isAdmin = await isAdminUser(userId);
   
@@ -373,6 +653,29 @@ export async function incrementDailyUpload(userId: string, maxUploads: number = 
   const hasUnlimited = isAdmin || userTier.maxDailyUploads >= 999999;
 
   const db = getAdminDb();
+
+  if (!hasUnlimited && userTier.tier === 'free') {
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    const storedTotalUploads = Number(userDoc.data()?.totalUploadsUsed);
+    const currentCount = Number.isFinite(storedTotalUploads) ? storedTotalUploads : 0;
+
+    if (currentCount >= userTier.maxDailyUploads) {
+      throw new Error('Daily upload limit reached');
+    }
+
+    await userRef.set({
+      totalUploadsUsed: currentCount + 1,
+      totalUploadsSyncedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    return {
+      success: true,
+      currentCount: currentCount + 1,
+      remainingUploads: Math.max(0, userTier.maxDailyUploads - currentCount - 1)
+    };
+  }
+
   const today = new Date().toISOString().split('T')[0];
   
   const statsRef = db.collection('users').doc(userId).collection('dailyStats').doc(today);
@@ -465,6 +768,7 @@ export async function getUserTier(userId: string): Promise<{
         await userRef.set({
           tier: 'super',
           maxDailyUploads: SUPER_TIER_UPLOAD_LIMIT,
+          isAdmin: isAllowedAdminEmail(resolvedEmail),
           updatedAt: new Date().toISOString(),
           ...(resolvedEmail && { email: resolvedEmail })
         }, { merge: true });
@@ -474,16 +778,31 @@ export async function getUserTier(userId: string): Promise<{
     }
 
     if (!userDoc.exists) {
-      return { tier: 'free', maxDailyUploads: 2 };
+      return { tier: 'free', maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT };
+    }
+
+    const tier = data?.tier || 'free';
+    const resolvedMaxDailyUploads =
+      tier === 'super'
+        ? SUPER_TIER_UPLOAD_LIMIT
+        : tier === 'basic'
+          ? Number(data?.maxDailyUploads || 10)
+          : FREE_TIER_TOTAL_UPLOAD_LIMIT;
+
+    if (data?.maxDailyUploads !== resolvedMaxDailyUploads) {
+      await userRef.set({
+        maxDailyUploads: resolvedMaxDailyUploads,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
     }
 
     return {
-      tier: data?.tier || 'free',
-      maxDailyUploads: data?.maxDailyUploads || 2
+      tier,
+      maxDailyUploads: resolvedMaxDailyUploads
     };
   } catch (error) {
     logger.error('Error getting user tier', { userId }, error instanceof Error ? error : undefined);
-    return { tier: 'free', maxDailyUploads: 2 };
+    return { tier: 'free', maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT };
   }
 }
 
@@ -505,12 +824,19 @@ export async function ensureUserInitialized(userId: string, email?: string) {
       // Create user document with defaults
       await userRef.set({
         tier: isPrivilegedUser ? 'super' : 'free',
-        maxDailyUploads: isPrivilegedUser ? SUPER_TIER_UPLOAD_LIMIT : 2,
-        isAdmin: false,
+        maxDailyUploads: isPrivilegedUser ? SUPER_TIER_UPLOAD_LIMIT : FREE_TIER_TOTAL_UPLOAD_LIMIT,
+        totalUploadsUsed: 0,
+        isAdmin: isAllowedAdminEmail(resolvedEmail),
         createdAt: new Date().toISOString(),
         ...(resolvedEmail && { email: resolvedEmail })
       });
       logger.info('Initialized new user document', { userId, email: resolvedEmail || 'none' });
+    } else if (resolvedEmail && isAllowedAdminEmail(resolvedEmail) && userDoc.data()?.isAdmin !== true) {
+      await userRef.set({
+        email: resolvedEmail,
+        isAdmin: true,
+        adminSyncedAt: new Date().toISOString(),
+      }, { merge: true });
     }
   } catch (error) {
     logger.warning('Error initializing user document', { userId }, error instanceof Error ? error : undefined);
@@ -544,9 +870,12 @@ export async function setAdminStatus(userId: string, isAdmin: boolean) {
 
 export async function logUpload(userId: string, participantsCount: number, tokensCount: number) {
   const db = getAdminDb();
+  const timestamp = new Date().toISOString();
+  const userDoc = await db.collection('users').doc(userId).get();
+  const userData = userDoc.exists ? userDoc.data() : undefined;
   
   const uploadRef = await db.collection('users').doc(userId).collection('uploads').add({
-    timestamp: new Date().toISOString(),
+    timestamp,
     participantsCount,
     tokensCount
   });
@@ -557,7 +886,33 @@ export async function logUpload(userId: string, participantsCount: number, token
   await db.collection('users').doc(userId).collection('sessions').doc(sessionId).set({
     shares: [],
     images: [],
-    createdAt: new Date().toISOString()
+    createdAt: timestamp
+  });
+
+  await db.collection('users').doc(userId).set({
+    lastUploadAt: timestamp,
+  }, { merge: true });
+
+  await recordAnalyticsEvent({
+    timestamp,
+    category: 'upload',
+    eventName: 'upload_completed',
+    status: 'completed',
+    userId,
+    userEmail: normalizeEmail(userData?.email) || await getAuthUserEmail(userId),
+    sessionId,
+    tier: userData?.tier || null,
+    message: 'Upload logged successfully',
+    metadata: {
+      participantsCount,
+      tokensCount,
+    },
+  });
+
+  await mergeAdminDailyMetrics(timestamp, {
+    uploadsCount: 1,
+    uploadParticipantsTotal: participantsCount,
+    uploadTokensTotal: tokensCount,
   });
   
   return sessionId;
@@ -565,65 +920,245 @@ export async function logUpload(userId: string, participantsCount: number, token
 
 export async function logButtonPress(buttonId: string) {
   const db = getAdminDb();
+  const timestamp = new Date().toISOString();
+  const FieldValue = getAdminFieldValue();
   
   const buttonRef = db.collection('globalStats').doc('buttonPresses');
   
   await buttonRef.set({
-    [buttonId]: (await buttonRef.get()).data()?.[buttonId] || 0 + 1
+    [buttonId]: FieldValue.increment(1)
   }, { merge: true });
+
+  await recordAnalyticsEvent({
+    timestamp,
+    category: 'button',
+    eventName: 'button_clicked',
+    status: 'completed',
+    message: `Button clicked: ${buttonId}`,
+    metadata: {
+      buttonId,
+    },
+  });
+
+  await mergeAdminDailyMetrics(timestamp, {
+    buttonClicksCount: 1,
+  });
 }
 
 export async function logShare(userId: string, sessionId: string, type: string, platform?: string) {
   const db = getAdminDb();
+  const timestamp = new Date().toISOString();
   
   const sessionRef = db.collection('users').doc(userId).collection('sessions').doc(sessionId);
   const sessionDoc = await sessionRef.get();
   const currentShares = sessionDoc.data()?.shares || [];
+  const userDoc = await db.collection('users').doc(userId).get();
+  const userData = userDoc.exists ? userDoc.data() : undefined;
   
   await sessionRef.update({
     shares: [...currentShares, {
       type,
       platform,
-      timestamp: new Date().toISOString()
+      timestamp
     }]
+  });
+
+  await recordAnalyticsEvent({
+    timestamp,
+    category: 'share',
+    eventName: 'share_completed',
+    status: 'completed',
+    userId,
+    userEmail: normalizeEmail(userData?.email) || await getAuthUserEmail(userId),
+    sessionId,
+    tier: userData?.tier || null,
+    message: `Share completed for ${type}`,
+    metadata: {
+      shareType: type,
+      platform: platform || null,
+    },
+  });
+
+  await mergeAdminDailyMetrics(timestamp, {
+    sharesCount: 1,
   });
 }
 
 export async function logImageGeneration(userId: string, sessionId: string, prompt: string) {
   const db = getAdminDb();
+  const timestamp = new Date().toISOString();
   
   const sessionRef = db.collection('users').doc(userId).collection('sessions').doc(sessionId);
   const sessionDoc = await sessionRef.get();
   const currentImages = sessionDoc.data()?.images || [];
+  const userDoc = await db.collection('users').doc(userId).get();
+  const userData = userDoc.exists ? userDoc.data() : undefined;
   
   await sessionRef.update({
     images: [...currentImages, {
       prompt,
-      timestamp: new Date().toISOString()
+      timestamp
     }]
+  });
+
+  await recordAnalyticsEvent({
+    timestamp,
+    category: 'image',
+    eventName: 'image_generation_completed',
+    status: 'completed',
+    userId,
+    userEmail: normalizeEmail(userData?.email) || await getAuthUserEmail(userId),
+    sessionId,
+    tier: userData?.tier || null,
+    message: 'Image generation logged',
+    metadata: {
+      promptLength: prompt.length,
+    },
+  });
+
+  await mergeAdminDailyMetrics(timestamp, {
+    imageGenerationCount: 1,
   });
 }
 
-export async function logFeedback(userId: string, sessionId: string, rating: number, comment: string) {
+export async function logFeedback({
+  userId,
+  sessionId,
+  rating,
+  comment,
+  analysisType,
+  analysisMode,
+  tier,
+  chatCode,
+  timestamp = new Date().toISOString(),
+}: FeedbackLogInput) {
   const db = getAdminDb();
+  const userDoc = await db.collection('users').doc(userId).get();
+  const userData = userDoc.exists ? userDoc.data() : undefined;
+  const normalizedEmail = normalizeEmail(userData?.email) || await getAuthUserEmail(userId) || null;
+  const trimmedComment = String(comment || '').trim();
+  const safeRating = Math.max(1, Math.min(10, Math.round(Number(rating) || 0)));
+  const feedbackPayload = {
+    rating: safeRating,
+    comment: trimmedComment,
+    timestamp,
+    analysisType: analysisType || null,
+    analysisMode: analysisMode || null,
+    tier: tier || userData?.tier || null,
+    chatCode: chatCode || null,
+  };
   
   await db.collection('users').doc(userId).collection('sessions').doc(sessionId).update({
-    feedback: {
-      rating,
-      comment,
-      timestamp: new Date().toISOString()
-    }
+    feedback: feedbackPayload
+  });
+
+  await db.collection(FEEDBACK_COLLECTION).add({
+    userId,
+    userEmail: normalizedEmail,
+    sessionId,
+    timestamp,
+    rating: safeRating,
+    comment: trimmedComment,
+    hasComment: trimmedComment.length > 0,
+    analysisType: analysisType || null,
+    analysisMode: analysisMode || null,
+    tier: tier || userData?.tier || null,
+    chatCode: chatCode || null,
+  });
+
+  await recordAnalyticsEvent({
+    timestamp,
+    category: 'feedback',
+    eventName: 'feedback_submitted',
+    status: 'submitted',
+    userId,
+    userEmail: normalizedEmail,
+    sessionId,
+    tier: tier || userData?.tier || null,
+    analysisType: analysisType || null,
+    analysisMode: analysisMode || null,
+    message: 'Feedback submitted',
+    metadata: {
+      rating: safeRating,
+      hasComment: trimmedComment.length > 0,
+      chatCode: chatCode || null,
+    },
+  });
+
+  await mergeAdminDailyMetrics(timestamp, {
+    feedbackCount: 1,
+    feedbackRatingSum: safeRating,
+    feedbackLowRatingCount: safeRating <= 4 ? 1 : 0,
   });
 }
 
 export async function logGeminiUsage(inputTokens: number, outputTokens: number, model: string) {
-  const db = getAdminDb();
-  
-  await db.collection('geminiUsage').add({
-    timestamp: new Date().toISOString(),
+  return logGeminiUsageDetailed({
     inputTokens,
     outputTokens,
-    model
+    model,
+  });
+}
+
+export async function logGeminiUsageDetailed({
+  timestamp = new Date().toISOString(),
+  inputTokens,
+  outputTokens,
+  model,
+  feature,
+  userId,
+  userEmail,
+  sessionId,
+  durationMs,
+  endpoint,
+  estimatedCostUsd,
+}: GeminiUsageLogInput) {
+  const db = getAdminDb();
+  const resolvedEstimatedCostUsd =
+    typeof estimatedCostUsd === 'number'
+      ? estimatedCostUsd
+      : estimateGeminiCostUsd(model, inputTokens, outputTokens);
+  
+  await db.collection('geminiUsage').add({
+    timestamp,
+    inputTokens,
+    outputTokens,
+    model,
+    feature: feature || null,
+    userId: userId || null,
+    userEmail: normalizeEmail(userEmail) || null,
+    sessionId: sessionId || null,
+    durationMs: typeof durationMs === 'number' ? durationMs : null,
+    endpoint: endpoint || null,
+    estimatedCostUsd: typeof resolvedEstimatedCostUsd === 'number' ? roundUsd(resolvedEstimatedCostUsd) : null,
+  });
+
+  await recordAnalyticsEvent({
+    timestamp,
+    category: 'ai',
+    eventName: 'gemini_usage_logged',
+    status: 'completed',
+    userId,
+    userEmail,
+    sessionId,
+    model,
+    endpoint: endpoint || null,
+    inputTokens,
+    outputTokens,
+    estimatedCostUsd: resolvedEstimatedCostUsd,
+    durationMs: typeof durationMs === 'number' ? durationMs : null,
+    message: feature ? `Gemini usage logged for ${feature}` : 'Gemini usage logged',
+    metadata: {
+      feature: feature || null,
+    },
+  });
+
+  await mergeAdminDailyMetrics(timestamp, {
+    geminiInputTokens: inputTokens,
+    geminiOutputTokens: outputTokens,
+    geminiCostMicros: typeof resolvedEstimatedCostUsd === 'number'
+      ? Math.round(resolvedEstimatedCostUsd * 1_000_000)
+      : 0,
   });
 }
 

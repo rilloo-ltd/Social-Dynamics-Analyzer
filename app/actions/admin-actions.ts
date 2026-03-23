@@ -1,9 +1,7 @@
 'use server';
 
-import { getAllStats, clearAllChats, updateUserTier } from '@/lib/firestore-admin';
+import { updateUserTier } from '@/lib/firestore-admin';
 import { logger } from '@/lib/logger';
-
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Magav1!';
 
 // Promo codes for unlimited access (server-side only)
 const UNLIMITED_PROMO_CODES = [
@@ -11,35 +9,6 @@ const UNLIMITED_PROMO_CODES = [
   'UNLIMITED_ACCESS',
   'VIP_PASS'
 ];
-
-export async function verifyAdminPasswordAction(password: string) {
-  if (password === ADMIN_PASSWORD) {
-    return { success: true };
-  }
-  return { success: false, message: 'Invalid password' };
-}
-
-export async function getAdminStatsAction() {
-  const stats = await getAllStats();
-
-  // Format chats for display
-  const enrichedStats = {
-    ...stats,
-    chats: stats.chats.map(chat => ({
-      code: chat.code,
-      timestamp: chat.timestamp,
-      outputs: chat.outputs,
-      userId: chat.userId
-    }))
-  };
-
-  return enrichedStats;
-}
-
-export async function resetCacheAction() {
-  await clearAllChats();
-  return { success: true, message: 'Cache cleared' };
-}
 
 /**
  * Validates and redeems a promo code for unlimited access
@@ -89,6 +58,6 @@ export async function checkUnlimitedAccessAction(userId: string) {
     return { hasUnlimited, tier: userTier.tier, maxDailyUploads: userTier.maxDailyUploads };
   } catch (error) {
     logger.error('Error checking unlimited access', { userId }, error instanceof Error ? error : undefined);
-    return { hasUnlimited: false, tier: 'free', maxDailyUploads: 2 };
+    return { hasUnlimited: false, tier: 'free', maxDailyUploads: 3 };
   }
 }

@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminDb } from '@/lib/firestore-admin';
+import { getAdminDb, recordAnalyticsEvent } from '@/lib/firestore-admin';
+
+async function safeRecordPaymentEvent(event: Parameters<typeof recordAnalyticsEvent>[0]) {
+  try {
+    await recordAnalyticsEvent(event);
+  } catch (error) {
+    console.error('Failed to record PayPal subscription analytics event:', error);
+  }
+}
 
 // Verify PayPal subscription on server-side
 async function verifyPayPalSubscription(subscriptionId: string): Promise<{
@@ -58,6 +66,17 @@ export async function POST(req: NextRequest) {
     const { userId, subscriptionId, tier } = await req.json();
 
     if (!userId || !subscriptionId || !tier) {
+      await safeRecordPaymentEvent({
+        category: 'payment',
+        eventName: 'subscription_activation_failed',
+        status: 'failed',
+        userId: userId || null,
+        tier: tier || null,
+        endpoint: '/api/paypal-subscription',
+        errorCode: 'missing_fields',
+        message: 'Missing required subscription activation fields',
+        metadata: { subscriptionId: subscriptionId || null },
+      });
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
@@ -65,6 +84,21 @@ export async function POST(req: NextRequest) {
     const verification = await verifyPayPalSubscription(subscriptionId);
 
     if (!verification.valid) {
+      await safeRecordPaymentEvent({
+        category: 'payment',
+        eventName: 'subscription_activation_failed',
+        status: 'failed',
+        userId,
+        tier,
+        endpoint: '/api/paypal-subscription',
+        errorCode: 'verification_failed',
+        message: 'Subscription verification failed',
+        metadata: {
+          subscriptionId,
+          paypalStatus: verification.status || null,
+          planId: verification.planId || null,
+        },
+      });
       return NextResponse.json({ error: 'Subscription verification failed' }, { status: 400 });
     }
 
@@ -94,6 +128,22 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString()
     });
 
+    await safeRecordPaymentEvent({
+      category: 'payment',
+      eventName: 'subscription_activated',
+      status: 'completed',
+      userId,
+      tier,
+      endpoint: '/api/paypal-subscription',
+      message: 'Subscription verified and activated',
+      metadata: {
+        subscriptionId,
+        paypalStatus: verification.status || null,
+        planId: verification.planId || null,
+        nextBillingDate: verification.nextBillingTime || null,
+      },
+    });
+
     console.log(`[PayPal] User ${userId} activated subscription ${subscriptionId} for ${tier} tier`);
 
     return NextResponse.json({ 
@@ -105,6 +155,14 @@ export async function POST(req: NextRequest) {
       message: 'Subscription verified and activated'
     });
   } catch (error) {
+    await safeRecordPaymentEvent({
+      category: 'payment',
+      eventName: 'subscription_activation_failed',
+      status: 'failed',
+      endpoint: '/api/paypal-subscription',
+      errorCode: 'server_error',
+      message: error instanceof Error ? error.message : 'PayPal subscription processing error',
+    });
     console.error('PayPal subscription processing error:', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }

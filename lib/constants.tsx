@@ -12,6 +12,7 @@ export const PRIVACY_DISCLAIMER_TEXT = "[PRIVACY_NOTICE] השמות המקורי
 // File upload limits
 export const MAX_FILE_SIZE_MB = 10;
 export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+export const FREE_TIER_TOTAL_ANALYSES = 3;
 
 export const TIER_CONFIG: Record<UserTier, { label: string, description: string, limit: number, icon: React.ReactNode, color: string }> = {
   free: { 

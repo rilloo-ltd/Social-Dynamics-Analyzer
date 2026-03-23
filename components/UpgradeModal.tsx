@@ -28,6 +28,9 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
 
   if (!isOpen) return null;
 
+  const usedFreeAnalyses = Math.min(currentCount, maxUploads);
+  const hasReachedFreeLimit = currentCount >= maxUploads;
+
   const tierPrices = {
     basic: '5.00',
     super: '30.00'
@@ -94,10 +97,12 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
               <Sparkles className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-2xl font-black text-white mb-2" dir="rtl">
-              הגעת למגבלה היומית! 🎉
+              {hasReachedFreeLimit ? 'הניתוחים החינמיים שלך הסתיימו' : 'רוצה להמשיך בלי לעצור?'}
             </h2>
             <p className="text-white/90 text-sm" dir="rtl">
-              השתמשת ב-{currentCount} מתוך {maxUploads} ניתוחים בחינם להיום
+              {hasReachedFreeLimit
+                ? `ניצלת את כל ${maxUploads} הניתוחים החינמיים שלך. כדי לקבל עוד ניתוחים צריך מנוי.`
+                : `ניצלת עד עכשיו ${usedFreeAnalyses} מתוך ${maxUploads} הניתוחים החינמיים שלך.`}
             </p>
           </div>
         </div>
@@ -110,8 +115,8 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
                 <Zap className="w-5 h-5 text-indigo-700" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-800 mb-1">ניתוחים ללא הגבלה</h3>
-                <p className="text-sm text-slate-600">קבל גישה לניתוחים בלתי מוגבלים ביום</p>
+                <h3 className="font-bold text-slate-800 mb-1">בלי להיתקע אחרי 3 ניתוחים</h3>
+                <p className="text-sm text-slate-600">המנוי פותח המשך שימוש רציף ומסיר את מגבלת החינם הכוללת</p>
               </div>
             </div>
 
@@ -257,7 +262,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
           </div>
 
           <p className="text-xs text-center text-slate-400 mt-4">
-            המגבלה תתאפס מחר בחצות 🌙
+            בחשבון החינמי יש {maxUploads} ניתוחים בסך הכול. אחרי זה צריך מנוי כדי להמשיך.
           </p>
         </div>
       </div>

@@ -75,6 +75,53 @@ export const createMessageLookup = (messages: ChatMessage[]): Map<string, ChatMe
   return lookup;
 };
 
+const PARTICIPANT_HAS_LETTER_REGEX = /\p{L}/u;
+const PARTICIPANT_HAS_NUMBER_REGEX = /\p{N}/u;
+
+export const isNumericParticipantLabel = (participant: string): boolean => {
+  const normalizedParticipant = (participant || '').trim();
+
+  if (!normalizedParticipant) {
+    return false;
+  }
+
+  return !PARTICIPANT_HAS_LETTER_REGEX.test(normalizedParticipant) && PARTICIPANT_HAS_NUMBER_REGEX.test(normalizedParticipant);
+};
+
+export const getParticipantMessageCounts = (messages: ChatMessage[]): Record<string, number> => {
+  return messages.reduce<Record<string, number>>((counts, message) => {
+    if (!message?.sender) {
+      return counts;
+    }
+
+    counts[message.sender] = (counts[message.sender] || 0) + 1;
+    return counts;
+  }, {});
+};
+
+export const sortParticipantsForGroupSelection = (
+  participants: string[],
+  messages: ChatMessage[]
+): string[] => {
+  const counts = getParticipantMessageCounts(messages);
+
+  return [...participants].sort((a, b) => {
+    const aIsNumeric = isNumericParticipantLabel(a);
+    const bIsNumeric = isNumericParticipantLabel(b);
+
+    if (aIsNumeric !== bIsNumeric) {
+      return aIsNumeric ? 1 : -1;
+    }
+
+    const countDifference = (counts[b] || 0) - (counts[a] || 0);
+    if (countDifference !== 0) {
+      return countDifference;
+    }
+
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  });
+};
+
 export const getTruncatedMessages = (messages: ChatMessage[], limit = Infinity): ChatMessage[] => {
   // No truncation - return all messages for full chat history analysis
   if (!messages || messages.length === 0) return [];

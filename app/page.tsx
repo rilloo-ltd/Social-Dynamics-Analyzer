@@ -11,6 +11,7 @@ import {
   createMessageLookup,
   createMessageLookupKey,
   formatChatDate,
+  sortParticipantsForGroupSelection,
   getChatMetadata,
   getTotalWordCount,
   getTruncatedMessages,
@@ -27,14 +28,15 @@ import { GroupParticipantSelector } from '@/components/GroupParticipantSelector'
 import { HowToExport } from '@/components/HowToExport';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
-import LongChatAnalysisChoiceModal from '@/components/LongChatAnalysisChoiceModal';
 import AskTheAuntModal from '@/components/AskTheAuntModal';
+import AnalysisSpeedModal from '@/components/AnalysisSpeedModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon, LightbulbIcon } from '@/components/Icons';
 import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp, Gift, Hash } from 'lucide-react';
 import { 
   LOGO_URL, 
   TIER_CONFIG, 
   ANALYSIS_CONFIG, 
+  FREE_TIER_TOTAL_ANALYSES,
   MAX_FILE_SIZE_BYTES,
   PRIVACY_DISCLAIMER_TEXT,
   LOADING_MESSAGES_PHASE_1,
@@ -43,6 +45,9 @@ import {
 } from '@/lib/constants';
 import { logClientError, isServerActionNotFoundError, getClientErrorMessage } from '@/lib/client-logger';
 import { getStoredTestAuthEmail } from '@/lib/auth';
+import { isAllowedAdminEmail } from '@/lib/admin-identity';
+import { hasCompletedFullAnalysisOutput, hasCompletedSingleAnalysisOutput } from '@/lib/analysis-output';
+import { ANALYSIS_EXECUTION_TIMEOUT_MS, ANALYSIS_TIMEOUT_ERROR_MESSAGE } from '@/lib/analysis-timeout';
 import AuthDetails from '@/components/AuthDetails';
 import PromoCodeModal from '@/components/PromoCodeModal';
 import { auth } from '@/lib/firebase';
@@ -59,10 +64,15 @@ import {
   trackButtonClick 
 } from '@/lib/mixpanel';
 
+type PendingAnalysisRequest =
+  | { kind: 'analysis'; type: AnalysisType; participants?: string[]; bypassCache?: boolean }
+  | { kind: 'askAunt'; mode: 'person' | 'general' };
+
 export default function HomePage() {
   const AUTH_DISABLED_FOR_TESTING = true;
   const ASK_THE_AUNT_MAX_EXTRA_FILES = 3;
   const ASK_AUNT_GENERAL_RESULT_KEY = '__ASK_AUNT_GENERAL__';
+  const ANALYSIS_FAILURE_QUOTA_MESSAGE = 'הניתוח לא הושלם, ולכן הוא לא ייגרע ממכסת הניתוחים שלך.';
   const router = useRouter();
   const [chatData, setChatData] = useState<ParsedChat | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
@@ -95,13 +105,13 @@ export default function HomePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: 2 });
+  const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: FREE_TIER_TOTAL_ANALYSES });
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [pendingAnalysis, setPendingAnalysis] = useState<{type: AnalysisType, participants?: string[]} | null>(null);
-  const [analysisDepthMode, setAnalysisDepthMode] = useState<AnalysisDepthMode | null>(null);
-  const [uploadedWordCount, setUploadedWordCount] = useState(0);
-  const [showLongChatChoiceModal, setShowLongChatChoiceModal] = useState(false);
-  const [pendingLongChatAnalysis, setPendingLongChatAnalysis] = useState<{ type: AnalysisType, participants?: string[] } | null>(null);
+  const [currentAnalysisMode, setCurrentAnalysisMode] = useState<AnalysisDepthMode>('standard');
+  const [activeGroupParticipants, setActiveGroupParticipants] = useState<string[] | null>(null);
+  const [askTheAuntAnalysisMode, setAskTheAuntAnalysisMode] = useState<AnalysisDepthMode>('standard');
+  const [pendingAnalysisRequest, setPendingAnalysisRequest] = useState<PendingAnalysisRequest | null>(null);
   const [showPromoCodeModal, setShowPromoCodeModal] = useState(false);
   const [pastedChatText, setPastedChatText] = useState("");
   const [showAskTheAuntModal, setShowAskTheAuntModal] = useState(false);
@@ -113,6 +123,8 @@ export default function HomePage() {
   const [askTheAuntError, setAskTheAuntError] = useState<string | null>(null);
   const [isAskTheAuntSubmitting, setIsAskTheAuntSubmitting] = useState(false);
   const [activeAskTheAuntResultKey, setActiveAskTheAuntResultKey] = useState<string | null>(null);
+  const visibleEmail = authUser?.email || testAuthEmail || null;
+  const canOpenAdminDashboard = isAllowedAdminEmail(visibleEmail);
 
   useEffect(() => {
     fetch('/api/messages')
@@ -128,9 +140,10 @@ export default function HomePage() {
   useEffect(() => {
     if (AUTH_DISABLED_FOR_TESTING) {
       setAuthUser(null);
-      setTestAuthEmail(getStoredTestAuthEmail());
+      const storedEmail = getStoredTestAuthEmail();
+      setTestAuthEmail(storedEmail);
       setAuthChecking(false);
-      setIsAdmin(false);
+      setIsAdmin(isAllowedAdminEmail(storedEmail));
       setSelectedTier('super');
       return;
     }
@@ -236,7 +249,16 @@ export default function HomePage() {
   const logFeedback = async (rating: number, comment: string) => {
     if (!sessionId || !authUser) return;
     try {
-        await logFeedbackAction(authUser.uid, sessionId, rating, comment);
+        await logFeedbackAction(
+          authUser.uid,
+          sessionId,
+          rating,
+          comment,
+          activeAnalysisType || null,
+          currentAnalysisMode,
+          selectedTier,
+          chatCode
+        );
         
         // Track in Mixpanel
         trackFeedback(rating, !!comment, authUser.uid);
@@ -290,6 +312,117 @@ export default function HomePage() {
     }
 
     return `${fallback} (${response.status})`;
+  };
+
+  const syncQuotaFromPayload = (payload: any) => {
+    const quotaSource = payload?.quota && typeof payload.quota === 'object' ? payload.quota : payload;
+    const currentCount = Number(quotaSource?.currentCount);
+    const maxUploads = Number(quotaSource?.maxUploads);
+
+    if (!Number.isFinite(currentCount) || !Number.isFinite(maxUploads) || maxUploads <= 0) {
+      return;
+    }
+
+    setUploadLimitData({
+      currentCount,
+      maxUploads,
+    });
+  };
+
+  const withAnalysisFailureQuotaMessage = (message: string): string => {
+    const trimmedMessage = message.trim();
+
+    if (!trimmedMessage) {
+      return ANALYSIS_FAILURE_QUOTA_MESSAGE;
+    }
+
+    if (
+      trimmedMessage.includes(ANALYSIS_FAILURE_QUOTA_MESSAGE) ||
+      trimmedMessage.includes('מכסת הניתוחים שלך')
+    ) {
+      return trimmedMessage;
+    }
+
+    return `${trimmedMessage}\n\n${ANALYSIS_FAILURE_QUOTA_MESSAGE}`;
+  };
+
+  const fetchWithAnalysisTimeout = async (url: string, init: RequestInit): Promise<Response> => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), ANALYSIS_EXECUTION_TIMEOUT_MS + 10_000);
+
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        throw new Error(ANALYSIS_TIMEOUT_ERROR_MESSAGE);
+      }
+
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
+
+  const ensureAnalysisQuotaAvailable = async (): Promise<boolean> => {
+    if (!authUser) {
+      return true;
+    }
+
+    try {
+      const response = await fetch('/api/track-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: authUser.uid, action: 'check' })
+      });
+
+      const data = await response.json().catch(() => null);
+      syncQuotaFromPayload(data);
+
+      if (!response.ok) {
+        console.error('Analysis quota check failed:', data);
+        return true;
+      }
+
+      if (!data?.canUpload) {
+        if (selectedTier === 'free') {
+          setShowUpgradeModal(true);
+        } else {
+          alert(data?.error || 'הגעת למכסת הניתוחים שלך כרגע.');
+        }
+
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error checking analysis quota:', error);
+      return true;
+    }
+  };
+
+  const postAnalysisRequest = async <T = any>(url: string, payload: Record<string, unknown>): Promise<T> => {
+    const response = await fetchWithAnalysisTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const responseData = await response.clone().json().catch(() => null);
+    syncQuotaFromPayload(responseData);
+
+    if (!response.ok) {
+      if (response.status === 429 && selectedTier === 'free') {
+        setShowUpgradeModal(true);
+      }
+
+      throw new Error(
+        (typeof responseData?.error === 'string' && responseData.error.trim())
+          ? responseData.error.trim()
+          : await getApiErrorMessage(response, 'Analysis failed')
+      );
+    }
+
+    return responseData as T;
   };
 
   const resetAskTheAuntState = () => {
@@ -436,12 +569,9 @@ export default function HomePage() {
     setSelectedUser(null);
     setUserAnalysisData({});
     setActiveAnalysisType(null);
+    setActiveGroupParticipants(null);
     setCachedOutputs({});
     setChatCode(null);
-    setUploadedWordCount(0);
-    setAnalysisDepthMode(null);
-    setShowLongChatChoiceModal(false);
-    setPendingLongChatAnalysis(null);
     resetAskTheAuntState();
   };
 
@@ -469,27 +599,30 @@ export default function HomePage() {
 
   const isPaidTier = selectedTier === 'basic' || selectedTier === 'super';
   const hasVisibleAuthSession = !!authUser || !!testAuthEmail;
-  const isPaidLongChat = isPaidTier && uploadedWordCount > 50000;
-  const getRequestedAnalysisMode = (): AnalysisDepthMode => {
-    if (selectedTier === 'free') {
+  const resolveAnalysisMode = (mode?: AnalysisDepthMode): AnalysisDepthMode => {
+    if (!isPaidTier) {
       return 'standard';
     }
 
-    if (isPaidLongChat) {
-      return analysisDepthMode || 'deep';
-    }
-
-    return 'deep';
+    return mode === 'deep' ? 'deep' : 'standard';
   };
 
-  const getAnalysisModeCacheSuffix = (): string => {
-    return isPaidLongChat ? `_${getRequestedAnalysisMode()}` : '';
+  const getAnalysisModeCacheSuffix = (mode?: AnalysisDepthMode): string => {
+    return isPaidTier ? `_${resolveAnalysisMode(mode)}` : '';
   };
 
-  const buildCacheKey = (baseKey: string): string => {
+  const buildCacheKey = (baseKey: string, mode?: AnalysisDepthMode): string => {
     if (!baseKey) return '';
-    return `${baseKey}${getAnalysisModeCacheSuffix()}`;
+    return `${baseKey}${getAnalysisModeCacheSuffix(mode)}`;
   };
+
+  const buildAnalysisStateKey = (baseKey: string, mode?: AnalysisDepthMode): string => {
+    if (!baseKey) return '';
+    return isPaidTier ? `${baseKey}${getAnalysisModeCacheSuffix(mode)}` : baseKey;
+  };
+
+  const hasExhaustedFreeAnalyses =
+    selectedTier === 'free' && uploadLimitData.currentCount >= uploadLimitData.maxUploads;
 
   const hasParticipantAxisSection = (value: unknown): boolean => {
     return (
@@ -515,6 +648,43 @@ export default function HomePage() {
       setAskTheAuntTargetUser(selectedUser || askTheAuntTargetUser || chatData.participants[0] || null);
     }
     setShowAskTheAuntModal(true);
+  };
+
+  const startAnalysisRequest = async (request: PendingAnalysisRequest, mode: AnalysisDepthMode) => {
+    const resolvedMode = resolveAnalysisMode(mode);
+    setPendingAnalysisRequest(null);
+
+    if (request.kind === 'askAunt') {
+      setAskTheAuntAnalysisMode(resolvedMode);
+      handleOpenAskTheAuntModal(request.mode);
+      return;
+    }
+
+    await runAnalysis(request.type, request.participants, request.bypassCache ?? false, resolvedMode);
+  };
+
+  const queueAnalysisRequest = (request: PendingAnalysisRequest) => {
+    if (!isPaidTier) {
+      void startAnalysisRequest(request, 'standard');
+      return;
+    }
+
+    setPendingAnalysisRequest(request);
+  };
+
+  const handleAnalysisModeSelected = (mode: AnalysisDepthMode) => {
+    if (!pendingAnalysisRequest) return;
+    void startAnalysisRequest(pendingAnalysisRequest, mode);
+  };
+
+  const beginAskTheAuntFlow = (mode: 'person' | 'general') => {
+    if (hasExhaustedFreeAnalyses) {
+      setShowUpgradeModal(true);
+      return;
+    }
+
+    void logButton('ASK_AUNT_INIT');
+    queueAnalysisRequest({ kind: 'askAunt', mode });
   };
 
   const handleCloseAskTheAuntModal = () => {
@@ -593,7 +763,8 @@ export default function HomePage() {
 
     const targetDisplayName = isAskTheAuntGeneralQuestion ? null : (askTheAuntTargetUser || selectedUser);
     const trimmedQuestion = askTheAuntQuestion.trim();
-    const resultKey = targetDisplayName || ASK_AUNT_GENERAL_RESULT_KEY;
+    const requestedAnalysisMode = resolveAnalysisMode(askTheAuntAnalysisMode);
+    const resultKey = buildAnalysisStateKey(targetDisplayName || ASK_AUNT_GENERAL_RESULT_KEY, requestedAnalysisMode);
 
     if (!isAskTheAuntGeneralQuestion && !targetDisplayName) {
       setAskTheAuntError('בחרו את האדם שעליו אתם רוצים לשאול.');
@@ -607,6 +778,11 @@ export default function HomePage() {
 
     if (!isAskTheAuntGeneralQuestion && askTheAuntWantsExtraChats && askTheAuntExtraFiles.length === 0) {
       setAskTheAuntError('סמנו לפחות קובץ אחד, או בחרו להמשיך רק עם הצ׳אט המקורי.');
+      return;
+    }
+
+    const canRunAnalysis = await ensureAnalysisQuotaAvailable();
+    if (!canRunAnalysis) {
       return;
     }
 
@@ -633,26 +809,28 @@ export default function HomePage() {
       }
       setShowAskTheAuntModal(false);
       setLoading(true);
+      setCurrentAnalysisMode(requestedAnalysisMode);
       setActiveAnalysisType(AnalysisType.ASK_AUNT);
       setActiveAskTheAuntResultKey(resultKey);
       setCurrentLoadingSnippet(getNextHighlight());
 
-      const response = await fetch('/api/ask-the-aunt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatSections: askContext.chatSections,
-          targetUser: askContext.targetUser,
-          question: trimmedQuestion
-        })
+      const responseData = await postAnalysisRequest('/api/ask-the-aunt', {
+        chatSections: askContext.chatSections,
+        targetUser: askContext.targetUser,
+        question: trimmedQuestion,
+        tier: selectedTier,
+        analysisMode: requestedAnalysisMode,
+        userId: authUser?.uid || null,
+        userEmail: visibleEmail,
+        sessionId,
+        questionMode: isAskTheAuntGeneralQuestion ? 'general' : 'person'
       });
 
-      const responseData = await response.json();
-      if (!response.ok) {
-        throw new Error(responseData.error || await getApiErrorMessage(response, 'Analysis failed'));
+      if (!hasCompletedSingleAnalysisOutput(responseData)) {
+        throw new Error('לא התקבל פלט לניתוח.');
       }
 
-      const answer = PRIVACY_DISCLAIMER_TEXT + deanonymizeText(responseData.result || '', askContext.reverseMap);
+      const answer = PRIVACY_DISCLAIMER_TEXT + deanonymizeText(responseData.result, askContext.reverseMap);
       setUserAnalysisData((previousData) => ({
         ...previousData,
         [resultKey]: {
@@ -677,14 +855,19 @@ export default function HomePage() {
       });
       setActiveAnalysisType(null);
       setShowAskTheAuntModal(true);
-      setAskTheAuntError(getClientErrorMessage(error));
+      setAskTheAuntError(withAnalysisFailureQuotaMessage(getClientErrorMessage(error)));
     } finally {
       setLoading(false);
       setIsAskTheAuntSubmitting(false);
     }
   };
 
-  const runAnalysis = async (type: AnalysisType, participants?: string[], bypassCache: boolean = false) => {
+  const runAnalysis = async (
+    type: AnalysisType,
+    participants?: string[],
+    bypassCache: boolean = false,
+    requestedAnalysisMode: AnalysisDepthMode = 'standard'
+  ) => {
     logButton(type);
 
     // Allow guest analysis during local testing; only track identified users.
@@ -692,7 +875,7 @@ export default function HomePage() {
       trackAnalysis(type, authUser.uid);
     }
 
-    await executeAnalysis(type, participants, bypassCache);
+    await executeAnalysis(type, participants, bypassCache, requestedAnalysisMode);
   };
 
   const handleOpenPromoCodeModal = () => {
@@ -752,48 +935,12 @@ export default function HomePage() {
   };
 
   const handleFileLoaded = async (text: string) => {
-    // Allow file upload without login, but check limits for logged-in users
-    if (authUser) {
-      // Check daily upload limit for authenticated users
-      try {
-        const checkResponse = await fetch('/api/track-upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: authUser.uid, action: 'check' })
-        });
-        
-        if (!checkResponse.ok) {
-          const errorData = await checkResponse.json();
-          console.error('Upload check failed:', errorData);
-          
-          // If it's just a missing user document, continue (will be created on increment)
-          if (checkResponse.status !== 500) {
-            alert('אירעה שגיאה בבדיקת המגבלה היומית.');
-            return;
-          }
-        } else {
-          const checkData = await checkResponse.json();
-          
-          if (!checkData.canUpload) {
-            alert('הגעת למגבלה היומית של העלאות. השתמש בקוד חברים (לחץ על כפתור המתנה 🎁) לקבלת גישה בלתי מוגבלת!');
-            return;
-          }
-        }
-      } catch (error) {
-        console.error('Error checking upload limit:', error);
-        // Don't block upload on check error - just log it
-      }
-    }
-
+    // Uploading a file never burns analysis quota. Quota is checked only when a real analysis starts.
     setIsProcessingFile(true);
     setProcessingProgress(0);
     setHighlights([]);
     usedHighlightIndicesRef.current.clear();
     setSessionId(null); // Reset session on new file
-    setUploadedWordCount(0);
-    setAnalysisDepthMode(null);
-    setShowLongChatChoiceModal(false);
-    setPendingLongChatAnalysis(null);
     // Don't reset chatCode and cachedOutputs here - let storeChat handle it
 
     try {
@@ -843,23 +990,6 @@ export default function HomePage() {
         await logUpload(parsed.participants.length, formattedAnonymizedText, estimatedTokens, code);
       }
 
-      // Increment upload count after successful upload (only for logged-in users)
-      if (authUser) {
-        try {
-          const incrementResponse = await fetch('/api/track-upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: authUser.uid, action: 'increment' })
-          });
-          
-          if (!incrementResponse.ok) {
-            console.error('Failed to increment upload count');
-          }
-        } catch (error) {
-          console.error('Error incrementing upload count:', error);
-        }
-      }
-
       const deanonymize = (t: any): string => {
         // Type guard - return as-is if not a string
         if (typeof t !== 'string') {
@@ -879,11 +1009,10 @@ export default function HomePage() {
       if (metadata.highlights) setHighlights(metadata.highlights.map(deanonymize));
 
       setChatData(parsed);
-      setUploadedWordCount(totalWordCount);
-      setAnalysisDepthMode(null);
       setSelectedUser(null);
       setUserAnalysisData({});
       setActiveAnalysisType(null);
+      setActiveGroupParticipants(null);
       
       // Push history state so back button clears chat instead of logout
       window.history.pushState({ hasChatData: true }, '', window.location.href);
@@ -925,24 +1054,30 @@ export default function HomePage() {
   };
 
   // Helper to check if cache exists for this analysis
-  const getCacheKey = (type: AnalysisType, participants?: string[]): string => {
+  const getCacheKey = (type: AnalysisType, participants?: string[], mode: AnalysisDepthMode = currentAnalysisMode): string => {
     if (type === AnalysisType.GROUP_DYNAMICS) {
-      return buildCacheKey(createGroupDynamicsCacheKey(participants, selectedTier));
+      return buildCacheKey(createGroupDynamicsCacheKey(participants, selectedTier), mode);
     }
     if (type === AnalysisType.ROMANTIC_DYNAMICS) {
-      return buildCacheKey(createRomanticDynamicsCacheKey(selectedTier));
+      return buildCacheKey(createRomanticDynamicsCacheKey(selectedTier), mode);
     }
     if (selectedUser && chatData) {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
-      return buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier));
+      return buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier), mode);
     }
     return '';
   };
 
   // Execute analysis with optional cache bypass
-  const executeAnalysis = async (type: AnalysisType, participants?: string[], bypassCache: boolean = false) => {
+  const executeAnalysis = async (
+    type: AnalysisType,
+    participants?: string[],
+    bypassCache: boolean = false,
+    requestedAnalysisMode: AnalysisDepthMode = currentAnalysisMode
+  ) => {
     if (!chatData) return;
-    const requestedAnalysisMode = getRequestedAnalysisMode();
+    const resolvedMode = resolveAnalysisMode(requestedAnalysisMode);
+    setCurrentAnalysisMode(resolvedMode);
 
     if (type === AnalysisType.GROUP_DYNAMICS) {
       setLoading(true);
@@ -951,9 +1086,15 @@ export default function HomePage() {
       try {
         // No character limit - analyze full chat history
         const limit = Infinity;
+        const selectedGroupParticipants = participants && participants.length > 0 ? [...participants] : undefined;
+        const anonymizedSelectedParticipants = selectedGroupParticipants?.map(
+          (participant) => chatData.nameMap[participant] || participant
+        );
+        setActiveGroupParticipants(selectedGroupParticipants || null);
         
         // Check cache for group dynamics
-        const cacheKey = buildCacheKey(createGroupDynamicsCacheKey(participants, selectedTier));
+        const cacheKey = buildCacheKey(createGroupDynamicsCacheKey(selectedGroupParticipants, selectedTier), resolvedMode);
+        const groupStateKey = buildAnalysisStateKey('GROUP', resolvedMode);
         
         let result = "";
         let strategy: 'full' | 'sampled' | undefined;
@@ -967,23 +1108,27 @@ export default function HomePage() {
             strategy = cachedOutputs[cacheKey].strategy;
             originalWordCount = cachedOutputs[cacheKey].originalWordCount;
         } else {
-            const response = await fetch('/api/analyze-group-dynamics', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: chatData.anonymizedMessages,
-                selectedParticipants: participants,
-                limit,
-                tier: selectedTier,
-                analysisMode: requestedAnalysisMode
-              })
-            });
-             
-            if (!response.ok) {
-              throw new Error(await getApiErrorMessage(response, 'Analysis failed'));
+            const canRunAnalysis = await ensureAnalysisQuotaAvailable();
+            if (!canRunAnalysis) {
+              setActiveAnalysisType(null);
+              return;
             }
-            
-            const analysisResult = await response.json();
+
+            const analysisResult = await postAnalysisRequest('/api/analyze-group-dynamics', {
+              messages: chatData.anonymizedMessages,
+              selectedParticipants: anonymizedSelectedParticipants,
+              limit,
+              tier: selectedTier,
+              analysisMode: resolvedMode,
+              userId: authUser?.uid || null,
+              userEmail: visibleEmail,
+              sessionId
+            });
+
+            if (!hasCompletedSingleAnalysisOutput(analysisResult)) {
+              throw new Error('לא התקבל פלט לניתוח.');
+            }
+
             result = analysisResult.result;
             strategy = analysisResult.strategy;
             originalWordCount = analysisResult.originalWordCount;
@@ -1012,14 +1157,14 @@ export default function HomePage() {
             return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
         };
         
-        setUserAnalysisData(prev => ({ ...prev, GROUP: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
+        setUserAnalysisData(prev => ({ ...prev, [groupStateKey]: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
       } catch (e: any) { 
         logClientError('Group dynamics analysis failed', e, {
           userId: authUser?.uid,
           chatCode,
           action: 'analyzeGroupDynamics'
         });
-        alert(getClientErrorMessage(e)); 
+        alert(withAnalysisFailureQuotaMessage(getClientErrorMessage(e))); 
         setActiveAnalysisType(null); 
       }
       finally { setLoading(false); }
@@ -1035,27 +1180,32 @@ export default function HomePage() {
         const limit = Infinity;
         
         // Check cache
-        const cacheKey = buildCacheKey(createRomanticDynamicsCacheKey(selectedTier));
+        const cacheKey = buildCacheKey(createRomanticDynamicsCacheKey(selectedTier), resolvedMode);
+        const romanticStateKey = buildAnalysisStateKey('ROMANTIC', resolvedMode);
         let result = "";
         if (!bypassCache && cachedOutputs[cacheKey]) {
             result = cachedOutputs[cacheKey].output;
         } else {
-            const response = await fetch('/api/analyze-romantic-dynamics', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: chatData.anonymizedMessages,
-                limit,
-                tier: selectedTier,
-                analysisMode: requestedAnalysisMode
-              })
-            });
-             
-            if (!response.ok) {
-              throw new Error(await getApiErrorMessage(response, 'Analysis failed'));
+            const canRunAnalysis = await ensureAnalysisQuotaAvailable();
+            if (!canRunAnalysis) {
+              setActiveAnalysisType(null);
+              return;
             }
-            
-            const responseData = await response.json();
+
+            const responseData = await postAnalysisRequest('/api/analyze-romantic-dynamics', {
+              messages: chatData.anonymizedMessages,
+              limit,
+              tier: selectedTier,
+              analysisMode: resolvedMode,
+              userId: authUser?.uid || null,
+              userEmail: visibleEmail,
+              sessionId
+            });
+
+            if (!hasCompletedSingleAnalysisOutput(responseData)) {
+              throw new Error('לא התקבל פלט לניתוח.');
+            }
+
             result = responseData.result ?? responseData;
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
             // Persist to storage
@@ -1078,14 +1228,14 @@ export default function HomePage() {
             const pattern = new RegExp(sortedKeys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|"), "g");
             return txt.replace(pattern, matched => chatData.reverseMap[matched] || matched);
         };
-        setUserAnalysisData(prev => ({ ...prev, ROMANTIC: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
+        setUserAnalysisData(prev => ({ ...prev, [romanticStateKey]: { content: PRIVACY_DISCLAIMER_TEXT + deanonymize(result) } }));
       } catch (e: any) { 
         logClientError('Romantic dynamics analysis failed', e, {
           userId: authUser?.uid,
           chatCode,
           action: 'analyzeRomanticDynamics'
         });
-        alert(getClientErrorMessage(e)); 
+        alert(withAnalysisFailureQuotaMessage(getClientErrorMessage(e))); 
         setActiveAnalysisType(null); 
       }
       finally { setLoading(false); }
@@ -1093,10 +1243,11 @@ export default function HomePage() {
     }
 
     if (!selectedUser) return;
+    const selectedUserStateKey = buildAnalysisStateKey(selectedUser, resolvedMode);
 
     // Check if we already have full analysis for this user in local state
     // Skip this check if we're explicitly regenerating (bypassCache=true)
-    if (!bypassCache && userAnalysisData[selectedUser]) {
+    if (!bypassCache && userAnalysisData[selectedUserStateKey]) {
       setActiveAnalysisType(type);
       return;
     }
@@ -1111,7 +1262,7 @@ export default function HomePage() {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
       
       // Check cache for full analysis
-      const cacheKey = buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier));
+      const cacheKey = buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier), resolvedMode);
       let rawResult: any = {};
       let strategy: 'full' | 'sampled' | undefined;
       let originalWordCount: number | undefined;
@@ -1121,23 +1272,27 @@ export default function HomePage() {
           strategy = cachedOutputs[cacheKey].strategy;
           originalWordCount = cachedOutputs[cacheKey].originalWordCount;
       } else {
-          const response = await fetch('/api/analyze-chat-full', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              messages: chatData.anonymizedMessages,
-              targetUser: anonUser,
-              limit,
-              tier: selectedTier,
-              analysisMode: requestedAnalysisMode
-            })
-          });
-          
-          if (!response.ok) {
-            throw new Error(await getApiErrorMessage(response, 'Analysis failed'));
+          const canRunAnalysis = await ensureAnalysisQuotaAvailable();
+          if (!canRunAnalysis) {
+            setActiveAnalysisType(null);
+            return;
           }
-          
-          const analysisResult = await response.json();
+
+          const analysisResult = await postAnalysisRequest('/api/analyze-chat-full', {
+            messages: chatData.anonymizedMessages,
+            targetUser: anonUser,
+            limit,
+            tier: selectedTier,
+            analysisMode: resolvedMode,
+            userId: authUser?.uid || null,
+            userEmail: visibleEmail,
+            sessionId
+          });
+
+          if (!hasCompletedFullAnalysisOutput(analysisResult)) {
+            throw new Error('לא התקבל פלט לניתוח.');
+          }
+
           rawResult = {
             personality: analysisResult.personality,
             othersThoughts: analysisResult.othersThoughts,
@@ -1179,7 +1334,7 @@ export default function HomePage() {
         [AnalysisType.HIDDEN_THOUGHTS]: PRIVACY_DISCLAIMER_TEXT + deanonymize(rawResult.hiddenThoughts || ""),
       };
 
-      setUserAnalysisData(prev => ({ ...prev, [selectedUser]: finalData }));
+      setUserAnalysisData(prev => ({ ...prev, [selectedUserStateKey]: finalData }));
     } catch (e: any) { 
       logClientError('Full chat analysis failed', e, {
         userId: authUser?.uid,
@@ -1187,35 +1342,31 @@ export default function HomePage() {
         chatCode,
         action: 'analyzeChatFull'
       });
-      alert(getClientErrorMessage(e)); 
+      alert(withAnalysisFailureQuotaMessage(getClientErrorMessage(e))); 
       setActiveAnalysisType(null); 
     }
     finally { setLoading(false); }
   };
 
-  const triggerAnalysis = async (type: AnalysisType, participants?: string[]) => {
+  const triggerAnalysis = (type: AnalysisType, participants?: string[], bypassCache: boolean = false) => {
     if (!chatData) return;
 
+    if (hasExhaustedFreeAnalyses) {
+      setShowUpgradeModal(true);
+      return;
+    }
+
     if (type === AnalysisType.ASK_AUNT) {
-      await logButton('ASK_AUNT_INIT');
-      handleOpenAskTheAuntModal('person');
+      beginAskTheAuntFlow('person');
       return;
     }
 
-    if (isPaidLongChat && !analysisDepthMode) {
-      setPendingLongChatAnalysis({ type, participants });
-      setShowLongChatChoiceModal(true);
-      return;
-    }
-
-    // Always execute with existing cache (bypassCache: false)
-    // User can regenerate from within the modal if they want
-    await runAnalysis(type, participants, false);
+    queueAnalysisRequest({ kind: 'analysis', type, participants, bypassCache });
   };
 
   const handleUseExistingAnalysis = () => {
     if (pendingAnalysis) {
-      runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, false);
+      runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, false, currentAnalysisMode);
     }
     setShowRegenerateConfirm(false);
     setPendingAnalysis(null);
@@ -1224,7 +1375,7 @@ export default function HomePage() {
   const handleGenerateNewAnalysis = () => {
     if (pendingAnalysis) {
       // Clear cache and local state before regenerating
-      const cacheKey = getCacheKey(pendingAnalysis.type, pendingAnalysis.participants);
+      const cacheKey = getCacheKey(pendingAnalysis.type, pendingAnalysis.participants, currentAnalysisMode);
       
       // Clear the cache entry
       if (cacheKey) {
@@ -1239,25 +1390,25 @@ export default function HomePage() {
       if (pendingAnalysis.type === AnalysisType.GROUP_DYNAMICS) {
         setUserAnalysisData(prev => {
           const newData = { ...prev };
-          delete newData.GROUP;
+          delete newData[buildAnalysisStateKey('GROUP', currentAnalysisMode)];
           return newData;
         });
       } else if (pendingAnalysis.type === AnalysisType.ROMANTIC_DYNAMICS) {
         setUserAnalysisData(prev => {
           const newData = { ...prev };
-          delete newData.ROMANTIC;
+          delete newData[buildAnalysisStateKey('ROMANTIC', currentAnalysisMode)];
           return newData;
         });
       } else if (selectedUser) {
         setUserAnalysisData(prev => {
           const newData = { ...prev };
-          delete newData[selectedUser];
+          delete newData[buildAnalysisStateKey(selectedUser, currentAnalysisMode)];
           return newData;
         });
       }
       
       // Now execute analysis with cache bypass
-      runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, true);
+      runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, true, currentAnalysisMode);
     }
     setShowRegenerateConfirm(false);
     setPendingAnalysis(null);
@@ -1266,22 +1417,6 @@ export default function HomePage() {
   const handleCloseRegenerateModal = () => {
     setShowRegenerateConfirm(false);
     setPendingAnalysis(null);
-  };
-
-  const handleCloseLongChatChoiceModal = () => {
-    setShowLongChatChoiceModal(false);
-    setPendingLongChatAnalysis(null);
-  };
-
-  const handleChooseLongChatAnalysisMode = async (mode: AnalysisDepthMode) => {
-    setAnalysisDepthMode(mode);
-    setShowLongChatChoiceModal(false);
-
-    if (pendingLongChatAnalysis) {
-      const analysisToRun = pendingLongChatAnalysis;
-      setPendingLongChatAnalysis(null);
-      await runAnalysis(analysisToRun.type, analysisToRun.participants, false);
-    }
   };
 
   useEffect(() => {
@@ -1340,27 +1475,20 @@ export default function HomePage() {
 
   const getModalContent = () => {
     if (!activeAnalysisType) return "";
-    if (activeAnalysisType === AnalysisType.GROUP_DYNAMICS) return userAnalysisData['GROUP']?.content || "";
-    if (activeAnalysisType === AnalysisType.ROMANTIC_DYNAMICS) return userAnalysisData['ROMANTIC']?.content || "";
+    if (activeAnalysisType === AnalysisType.GROUP_DYNAMICS) return userAnalysisData[buildAnalysisStateKey('GROUP', currentAnalysisMode)]?.content || "";
+    if (activeAnalysisType === AnalysisType.ROMANTIC_DYNAMICS) return userAnalysisData[buildAnalysisStateKey('ROMANTIC', currentAnalysisMode)]?.content || "";
     if (activeAnalysisType === AnalysisType.ASK_AUNT) {
-      const resultKey = activeAskTheAuntResultKey || selectedUser || ASK_AUNT_GENERAL_RESULT_KEY;
+      const resultKey = activeAskTheAuntResultKey || buildAnalysisStateKey(selectedUser || ASK_AUNT_GENERAL_RESULT_KEY, currentAnalysisMode);
       return userAnalysisData[resultKey]?.[AnalysisType.ASK_AUNT] || "";
     }
     if (!selectedUser) return "";
-    return userAnalysisData[selectedUser]?.[activeAnalysisType] || "";
+    return userAnalysisData[buildAnalysisStateKey(selectedUser, currentAnalysisMode)]?.[activeAnalysisType] || "";
   };
 
   if (isProcessingFile) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
         {renderPaidTierBadge('top-16 left-4')}
-        <button 
-          onClick={() => router.push('/admin/prompts')} 
-          className="fixed top-4 left-4 p-2 text-slate-400 hover:text-slate-600 transition-colors z-50 opacity-50 hover:opacity-100 cursor-pointer"
-          title="Admin Login"
-        >
-          <Lock className="w-4 h-4" />
-        </button>
         <div className="flex flex-col items-center space-y-8 max-w-sm w-full animate-fadeIn">
           <div className="relative">
             <div className="absolute inset-0 bg-blue-200 rounded-full animate-ping opacity-75 scale-150"></div>
@@ -1404,18 +1532,9 @@ export default function HomePage() {
         {renderPaidTierBadge()}
         <AuthDetails />
 
-        {/* Top Header Bar for Profile/Admin - Only when logged in */}
+        {/* Top Header Bar - Only when logged in */}
         {hasVisibleAuthSession && (
           <div className="absolute top-0 left-0 right-0 z-50 px-4 py-2 sm:py-4 flex justify-end items-center gap-2">
-            {isAdmin && (
-              <button
-                onClick={() => router.push('/admin/prompts')}
-                className="p-2 sm:p-2.5 bg-yellow-500/90 backdrop-blur-sm hover:bg-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
-                title="Admin Panel"
-              >
-                <Lock className="w-4 h-4 sm:w-5 sm:h-5" />
-              </button>
-            )}
             <button
               onClick={handleOpenPromoCodeModal}
               type="button"
@@ -1440,10 +1559,8 @@ export default function HomePage() {
            <div className="absolute -bottom-1 left-0 right-0 h-24 bg-gradient-to-t from-slate-50 to-transparent"></div>
            
            <div className="max-w-5xl mx-auto px-4 relative z-10">
-              <div 
-                onClick={() => hasVisibleAuthSession && router.push('/profile')}
-                className={`inline-flex items-center justify-center p-1 bg-white/60 backdrop-blur-md rounded-full mb-8 shadow-xl animate-bounce-slow ring-4 ring-teal-100/50 ${hasVisibleAuthSession ? 'cursor-pointer hover:ring-indigo-200 hover:scale-105 transition-all' : ''}`}
-                title={hasVisibleAuthSession ? 'הפרופיל שלי' : ''}
+              <div
+                className="inline-flex items-center justify-center p-1 bg-white/60 backdrop-blur-md rounded-full mb-8 shadow-xl animate-bounce-slow ring-4 ring-teal-100/50"
               >
                  <img src={LOGO_URL} className="w-24 h-24 rounded-full border-4 border-white shadow-sm" />
               </div>
@@ -1676,15 +1793,23 @@ export default function HomePage() {
                         <ul className="space-y-3 mb-8">
                             <li className="flex items-center gap-2 text-slate-700">
                                 <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                                <span>2 ניתוחים ביום</span>
+                                <span>3 ניתוחים</span>
                             </li>
                             <li className="flex items-center gap-2 text-slate-700">
                                 <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
                                 <span>ניתוחים בסיסיים</span>
                             </li>
-                            <li className="flex items-center gap-2 text-slate-400">
-                                <XCircle className="w-5 h-5 flex-shrink-0" />
-                                <span>ניתוחים מתקדמים</span>
+                            <li className="flex items-center gap-2 text-slate-700">
+                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                                <span>שאילת שאלות על שיחות ווטסאפ</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-slate-700">
+                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                                <span>העלאת יותר משיחה אחת כדי להצליב עמדות ודעות על אנשים מסוימים</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-slate-700">
+                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                                <span>ניתוח דינמיקות קבוצתיות</span>
                             </li>
                         </ul>
                         <button className="w-full py-3 rounded-xl bg-slate-200 text-slate-600 font-bold cursor-not-allowed">
@@ -1705,15 +1830,23 @@ export default function HomePage() {
                         <ul className="space-y-3 mb-8">
                             <li className="flex items-center gap-2 text-blue-900">
                                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span className="font-bold">10 ניתוחים ביום</span>
+                                <span className="font-bold">10 ניתוחים שבועיים</span>
                             </li>
                             <li className="flex items-center gap-2 text-blue-800">
                                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>ניתוחים בסיסיים</span>
+                                <span>ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר</span>
                             </li>
                             <li className="flex items-center gap-2 text-blue-800">
                                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>תמיכה סטנדרטית</span>
+                                <span>שאילת שאלות על שיחות ווטסאפ</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-blue-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>העלאת יותר משיחה אחת כדי להצליב עמדות ודעות על אנשים מסוימים</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-blue-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>ניתוח דינמיקות קבוצתיות</span>
                             </li>
                         </ul>
                         <button 
@@ -1740,19 +1873,27 @@ export default function HomePage() {
                         <ul className="space-y-3 mb-8">
                             <li className="flex items-center gap-2 text-purple-900">
                                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span className="font-bold">50 ניתוחים ביום</span>
+                                <span className="font-bold">50 ניתוחים שבועיים</span>
                             </li>
                             <li className="flex items-center gap-2 text-purple-800">
                                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>ניתוחים מתקדמים</span>
+                                <span>גישה מוקדמת לפיצ'רים נוספים</span>
                             </li>
                             <li className="flex items-center gap-2 text-purple-800">
                                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>תמיכה עדיפות</span>
+                                <span>ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר</span>
                             </li>
                             <li className="flex items-center gap-2 text-purple-800">
                                 <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>גישה מוקדמת לפיצ'רים</span>
+                                <span>שאילת שאלות על שיחות ווטסאפ</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-purple-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>העלאת יותר משיחה אחת כדי להצליב עמדות ודעות על אנשים מסוימים</span>
+                            </li>
+                            <li className="flex items-center gap-2 text-purple-800">
+                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                                <span>ניתוח דינמיקות קבוצתיות</span>
                             </li>
                         </ul>
                         <button 
@@ -1808,6 +1949,17 @@ export default function HomePage() {
             </div>
         </div>
 
+        <div className="bg-white border-t border-slate-200">
+          <div className="max-w-5xl mx-auto px-4 py-12 text-center">
+            <p className="text-sm font-semibold tracking-[0.25em] text-teal-600/80 mb-4">
+              יצירה משותפת
+            </p>
+            <p className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">
+              הדודה היא יצירה משותפת של Riloo וד"ר רועי צזנה
+            </p>
+          </div>
+        </div>
+
         {/* Footer */}
         <footer className="bg-white border-t border-slate-200 py-8">
           <div className="max-w-7xl mx-auto px-4">
@@ -1827,6 +1979,13 @@ export default function HomePage() {
               >
                 מדיניות פרטיות
               </button>
+              <span className="text-slate-300">•</span>
+              <a
+                href="mailto:contact@rilloo.com"
+                className="text-sm text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer"
+              >
+                Contact
+              </a>
             </div>
             <p className="text-center text-xs text-slate-400 opacity-60">
               הניתוח מתבצע באמצעות בינה מלאכותית ונועד למטרות בידור והעשרה בלבד.
@@ -1876,6 +2035,8 @@ export default function HomePage() {
     );
   }
 
+  const sortedParticipants = sortParticipantsForGroupSelection(chatData.participants, chatData.messages);
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
       {renderPaidTierBadge('top-20 left-4')}
@@ -1891,15 +2052,6 @@ export default function HomePage() {
          <div className="flex items-center gap-3">
             {hasVisibleAuthSession && (
               <>
-                {isAdmin && (
-                  <button
-                    onClick={() => router.push('/admin/prompts')}
-                    className="p-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-all cursor-pointer"
-                    title="Admin Panel"
-                  >
-                    <Lock className="w-4 h-4" />
-                  </button>
-                )}
                 <button
                   onClick={() => router.push('/profile')}
                   className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all cursor-pointer"
@@ -1955,11 +2107,11 @@ export default function HomePage() {
                    </div>
                  )}
               </div>
-           </button>
+	           </button>
 
-           <div className="max-w-4xl mx-auto mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+	           <div className="max-w-4xl mx-auto mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
              <button
-               onClick={() => handleOpenAskTheAuntModal('person')}
+               onClick={() => beginAskTheAuntFlow('person')}
                className="group relative overflow-hidden rounded-[2rem] border border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-sky-50 p-6 text-right shadow-lg shadow-cyan-100/60 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-cyan-200/70 cursor-pointer"
              >
                <div className="absolute -left-14 -top-14 h-32 w-32 rounded-full bg-cyan-200/40 blur-3xl transition-opacity duration-300 group-hover:opacity-100" />
@@ -1980,7 +2132,7 @@ export default function HomePage() {
              </button>
 
              <button
-               onClick={() => handleOpenAskTheAuntModal('general')}
+               onClick={() => beginAskTheAuntFlow('general')}
                className="group relative overflow-hidden rounded-[2rem] border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-slate-50 p-6 text-right shadow-lg shadow-indigo-100/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-indigo-200/70 cursor-pointer"
              >
                <div className="absolute -right-12 -bottom-14 h-32 w-32 rounded-full bg-indigo-200/40 blur-3xl transition-opacity duration-300 group-hover:opacity-100" />
@@ -2003,7 +2155,7 @@ export default function HomePage() {
 
            <h2 className="text-2xl font-bold text-slate-800 mt-12 mb-6">או בחר משתתף ספציפי לניתוח אישי</h2>
            <div className="flex flex-wrap justify-center gap-3">
-             {chatData.participants.map(p => (
+             {sortedParticipants.map(p => (
                <button key={p} onClick={() => setSelectedUser(p === selectedUser ? null : p)} className={`px-6 py-3 rounded-full font-bold transition-all cursor-pointer ${selectedUser === p ? 'bg-slate-900 text-white scale-105' : 'bg-white text-slate-700 hover:bg-slate-100 border'}`}>{p}</button>
              ))}
            </div>
@@ -2043,43 +2195,13 @@ export default function HomePage() {
         onLogFeedback={logFeedback}
         onRegenerate={activeAnalysisType === AnalysisType.ASK_AUNT ? undefined : async () => {
           if (!activeAnalysisType) return;
-          // For group analysis, use undefined (all participants)
-          // For individual analysis, no participants needed
-          const participants: string[] | undefined = undefined;
-          
-          // Clear cache
-          const cacheKey = getCacheKey(activeAnalysisType, participants);
-          if (cacheKey) {
-            setCachedOutputs(prev => {
-              const newCache = { ...prev };
-              delete newCache[cacheKey];
-              return newCache;
-            });
-          }
-          
-          // Clear local state based on analysis type
-          if (activeAnalysisType === AnalysisType.GROUP_DYNAMICS) {
-            setUserAnalysisData(prev => {
-              const newData = { ...prev };
-              delete newData.GROUP;
-              return newData;
-            });
-          } else {
-            // Clear all 4 individual analysis types, keep only GROUP if it exists
-            setUserAnalysisData(prev => {
-              const newData = { ...prev };
-              delete newData.PERSONALITY;
-              delete newData.WHAT_OTHERS_THINK;
-              delete newData.IMPROVEMENT;
-              delete newData.HIDDEN_THOUGHTS;
-              return newData;
-            });
-          }
-          
-          // Execute with cache bypass
-          await executeAnalysis(activeAnalysisType, participants, true);
+          const participants: string[] | undefined = activeAnalysisType === AnalysisType.GROUP_DYNAMICS
+            ? activeGroupParticipants || undefined
+            : undefined;
+          triggerAnalysis(activeAnalysisType, participants, true);
         }}
         analysisType={activeAnalysisType || undefined}
+        groupParticipantFilter={activeAnalysisType === AnalysisType.GROUP_DYNAMICS ? activeGroupParticipants : null}
         chatCode={chatCode}
         userId={authUser?.uid || null}
       />
@@ -2087,20 +2209,20 @@ export default function HomePage() {
       {isGroupSelectorOpen && (
         <GroupParticipantSelector
           isOpen={isGroupSelectorOpen}
-          participants={(() => {
-             // Use all messages to count participation (no truncation)
-             const truncatedMsgs = getTruncatedMessages(chatData.anonymizedMessages, Infinity);
-             const counts: Record<string, number> = {};
-             truncatedMsgs.forEach(m => {
-                 counts[m.sender] = (counts[m.sender] || 0) + 1;
-             });
-             // Sort all participants: those with counts first (desc), then those with 0
-             return [...chatData.participants].sort((a, b) => (counts[b] || 0) - (counts[a] || 0));
-          })()}
+          participants={sortedParticipants}
           onClose={() => setIsGroupSelectorOpen(false)}
-          onConfirm={(selected) => { setIsGroupSelectorOpen(false); triggerAnalysis(AnalysisType.GROUP_DYNAMICS, selected); }}
+          onConfirm={(selected) => {
+            setIsGroupSelectorOpen(false);
+            triggerAnalysis(AnalysisType.GROUP_DYNAMICS, selected);
+          }}
         />
       )}
+
+      <AnalysisSpeedModal
+        isOpen={!!pendingAnalysisRequest}
+        onClose={() => setPendingAnalysisRequest(null)}
+        onSelect={handleAnalysisModeSelected}
+      />
 
       <AskTheAuntModal
         isOpen={showAskTheAuntModal}
@@ -2137,13 +2259,6 @@ export default function HomePage() {
         onGenerateNew={handleGenerateNewAnalysis}
       />
 
-      <LongChatAnalysisChoiceModal
-        isOpen={showLongChatChoiceModal}
-        wordCount={uploadedWordCount}
-        onClose={handleCloseLongChatChoiceModal}
-        onChoose={handleChooseLongChatAnalysisMode}
-      />
-
       {authUser && (
         <PromoCodeModal
           isOpen={showPromoCodeModal}
@@ -2159,6 +2274,32 @@ export default function HomePage() {
           }}
         />
       )}
+
+      <button
+        type="button"
+        onClick={() => router.push('/admin')}
+        className="fixed bottom-6 right-6 z-[120] inline-flex items-center gap-2 rounded-full bg-white/95 px-3 py-3 shadow-2xl ring-1 ring-slate-200 backdrop-blur-md transition-all hover:scale-105 hover:ring-indigo-300 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-300"
+        title="Admin Dashboard"
+        aria-label="Open admin dashboard"
+      >
+        <img
+          src={LOGO_URL}
+          className="h-8 w-8 rounded-full border-2 border-white shadow-sm"
+          alt="Admin"
+        />
+        <span className="text-sm font-bold text-slate-700">Admin</span>
+      </button>
+
+      <div className="bg-white border-t border-slate-200 mt-20">
+        <div className="max-w-5xl mx-auto px-4 py-12 text-center">
+          <p className="text-sm font-semibold tracking-[0.25em] text-teal-600/80 mb-4">
+            יצירה משותפת
+          </p>
+          <p className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">
+            הדודה היא יצירה משותפת של Riloo וד"ר רועי צזנה
+          </p>
+        </div>
+      </div>
 
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 mt-20">
@@ -2179,6 +2320,13 @@ export default function HomePage() {
             >
               מדיניות פרטיות
             </button>
+            <span className="text-slate-300">•</span>
+            <a
+              href="mailto:contact@rilloo.com"
+              className="hover:text-indigo-600 transition-colors cursor-pointer"
+            >
+              Contact
+            </a>
           </div>
         </div>
       </footer>

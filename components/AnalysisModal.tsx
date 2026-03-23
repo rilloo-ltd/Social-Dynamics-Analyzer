@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { toBlob } from 'html-to-image';
 import { CardColor, AnalysisType } from '../types';
 import { serverSummarizeForSharing, serverGetVisualAssetData, serverGenerateCartoonImage, VisualAssetData } from '@/lib/gemini-server';
+import { normalizeGeneratedText } from '@/lib/analysis-text';
 import { updateChatCacheAction } from '@/app/actions/analytics-actions';
 import {
   ParticipantAxisSharePoster,
@@ -27,6 +28,7 @@ interface AnalysisModalProps {
   onLogFeedback?: (rating: number, comment: string) => void;
   onRegenerate?: () => void;
   analysisType?: AnalysisType;
+  groupParticipantFilter?: string[] | null;
   chatCode?: string | null;
   userId?: string | null;
 }
@@ -138,7 +140,7 @@ const MarkdownRenderer = ({ text }: { text: string }) => {
 
   // Normalize line endings, then split "**Header:** content on same line" into
   // two separate lines so each renders as its own element with proper spacing.
-  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const normalized = normalizeGeneratedText(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const preprocessed = normalized.replace(
     /^(\*\*[^*\n]+\*\*:?)([ \t]+)([^\n])/gm,
     '$1\n$3'
@@ -214,7 +216,8 @@ const PARTICIPANT_AXIS_LABEL_MAP: Record<string, ParticipantAxisVisualKey> = {
 const PARTICIPANT_AXIS_RENDER_ORDER: ParticipantAxisVisualKey[] = ['liberalism', 'calmness', 'rationalism', 'humor'];
 
 const extractParticipantAxisVisualization = (
-  text: string
+  text: string,
+  allowedParticipantNames?: string[] | null
 ): {
   bodyText: string;
   participants: ParticipantAxisVisualParticipant[];
@@ -229,12 +232,19 @@ const extractParticipantAxisVisualization = (
 
   const participantBlockMatches = sectionText.matchAll(/\*\*([^*\n]+)\*\*\s*([\s\S]*?)(?=(?:\n\s*\*\*[^*\n]+\*\*)|$)/g);
   const participants: ParticipantAxisVisualParticipant[] = [];
+  const allowedParticipantSet = allowedParticipantNames && allowedParticipantNames.length > 0
+    ? new Set(allowedParticipantNames.map((name) => name.trim()))
+    : null;
 
   for (const match of participantBlockMatches) {
     const participantName = match[1]?.trim();
     const blockContent = match[2] || '';
 
     if (!participantName) {
+      continue;
+    }
+
+    if (allowedParticipantSet && !allowedParticipantSet.has(participantName)) {
       continue;
     }
 
@@ -277,7 +287,7 @@ const extractParticipantAxisVisualization = (
 };
 
 export const AnalysisModal: React.FC<AnalysisModalProps> = ({ 
-  isOpen, onClose, title, icon, content, loading, loadingHighlight, loadingMessage, color, onShare, onLogImageGeneration, onLogFeedback, onRegenerate, analysisType, chatCode, userId 
+  isOpen, onClose, title, icon, content, loading, loadingHighlight, loadingMessage, color, onShare, onLogImageGeneration, onLogFeedback, onRegenerate, analysisType, groupParticipantFilter, chatCode, userId 
 }) => {
   const styles = colorStyles[color] || colorStyles.blue;
   const [shareHubState, setShareHubState] = useState<'closed' | 'version' | 'platform' | 'visual_preview'>('closed');
@@ -296,10 +306,10 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
 
-  const displayContent = content?.replace(/^\[PRIVACY_NOTICE\].*\n\n/, "") || "";
+  const displayContent = normalizeGeneratedText(content?.replace(/^\[PRIVACY_NOTICE\].*\n\n/, "") || "");
   const privacyNoticeText = content?.match(/^\[PRIVACY_NOTICE\] (.*)\n\n/)?.[1] || "";
   const participantAxisVisualization = analysisType === AnalysisType.GROUP_DYNAMICS
-    ? extractParticipantAxisVisualization(displayContent)
+    ? extractParticipantAxisVisualization(displayContent, groupParticipantFilter)
     : { bodyText: displayContent, participants: [] };
   const renderedBodyContent = participantAxisVisualization.bodyText || displayContent;
   const hasShareableVisuals = participantAxisVisualization.participants.length > 0;
