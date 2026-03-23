@@ -11,6 +11,7 @@ interface FileUploadProps {
 export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const processFile = async (file: File) => {
     setIsLoading(true);
@@ -36,6 +37,10 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
     }
   };
 
+  const handleClick = () => {
+    fileInputRef.current?.click();
+  };
+
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(true);
@@ -58,7 +63,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
 
   return (
     <div
-      className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl transition-all duration-300 relative ${
+      className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl transition-all duration-300 relative cursor-pointer ${
         isDragging
           ? 'border-blue-500 bg-blue-50 scale-[1.02]'
           : 'border-slate-300 bg-white hover:border-blue-400 shadow-sm'
@@ -66,7 +71,15 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onClick={handleClick}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept=".txt,.zip"
+        onChange={handleFileChange}
+      />
       {isLoading && (
         <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center rounded-xl">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mb-2"></div>
@@ -98,17 +111,11 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
         </div>
       </div>
 
-      <label className={`relative cursor-pointer font-bold py-2.5 px-8 rounded-full transition duration-300 shadow-md ${
-        isDragging || isLoading ? 'bg-blue-700 text-white pointer-events-none' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'
+      <div className={`font-bold py-2.5 px-8 rounded-full transition duration-300 shadow-md pointer-events-none ${
+        isDragging || isLoading ? 'bg-blue-700 text-white' : 'bg-blue-600 text-white'
       }`}>
         <span>בחר קובץ מהמכשיר</span>
-        <input
-          type="file"
-          className="hidden"
-          accept=".txt,.zip"
-          onChange={handleFileChange}
-        />
-      </label>
+      </div>
     </div>
   );
 };
