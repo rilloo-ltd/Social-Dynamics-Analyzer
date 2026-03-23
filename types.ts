@@ -34,7 +34,7 @@ export interface ParsedChat {
 
 export type CardColor = 'blue' | 'purple' | 'green' | 'red' | 'yellow' | 'teal' | 'pink' | 'cyan' | 'orange' | 'indigo' | 'slate';
 
-export type UserTier = 'free' | 'basic' | 'super';
+export type UserTier = 'free' | 'basic' | 'super' | 'friends';
 export type AnalysisDepthMode = 'deep' | 'standard';
 
 // Chunking types for smart sampling of large chats

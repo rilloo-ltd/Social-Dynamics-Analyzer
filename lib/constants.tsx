@@ -35,6 +35,13 @@ export const TIER_CONFIG: Record<UserTier, { label: string, description: string,
     limit: Infinity, // Full history analysis
     icon: <Star className="w-5 h-5" />,
     color: 'bg-amber-50 border-amber-200 text-amber-700'
+  },
+  friends: {
+    label: 'Friends User',
+    description: 'גישה בלתי מוגבלת לשבוע אחד',
+    limit: Infinity,
+    icon: <Heart className="w-5 h-5" />,
+    color: 'bg-emerald-50 border-emerald-200 text-emerald-700'
   }
 };
 

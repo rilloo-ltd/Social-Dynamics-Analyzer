@@ -5,7 +5,6 @@ import { toBlob } from 'html-to-image';
 import { CardColor, AnalysisType } from '../types';
 import { serverSummarizeForSharing, serverGetVisualAssetData, serverGenerateCartoonImage, VisualAssetData } from '@/lib/gemini-server';
 import { normalizeGeneratedText } from '@/lib/analysis-text';
-import { updateChatCacheAction } from '@/app/actions/analytics-actions';
 import {
   ParticipantAxisSharePoster,
   ParticipantAxisVisualizer,
@@ -29,7 +28,7 @@ interface AnalysisModalProps {
   onRegenerate?: () => void;
   analysisType?: AnalysisType;
   groupParticipantFilter?: string[] | null;
-  chatCode?: string | null;
+  chatCode?: string | null; // kept for legacy prop compatibility — no longer used internally
   userId?: string | null;
 }
 
@@ -446,9 +445,6 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
       setIsSummarizing(true);
       try {
         const summary = await serverSummarizeForSharing(displayContent);
-        if (chatCode && userId) {
-          updateChatCacheAction(userId, chatCode, 'summary_for_sharing', summary).catch(e => console.error('Failed to log summary', e));
-        }
         setSelectedShareText(constructShareableText(summary));
         setShareHubState('platform');
       } catch { alert("אירעה שגיאה בסיכום."); }
@@ -457,9 +453,6 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
       setIsSummarizing(true);
       try {
         const vData = await serverGetVisualAssetData(displayContent, title);
-        if (chatCode && userId) {
-          updateChatCacheAction(userId, chatCode, 'visual_asset_data', vData).catch(e => console.error('Failed to log visual data', e));
-        }
         setVisualData(vData);
         const url = await serverGenerateCartoonImage(vData.visualPrompt);
         if (onLogImageGeneration) onLogImageGeneration();

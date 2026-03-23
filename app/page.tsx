@@ -20,7 +20,7 @@ import {
   replacePersonAliasesInText
 } from '@/lib/chat-utils';
 import { isSupportedChatUploadFile, readChatUploadFile } from '@/lib/chat-file-utils';
-import { updateChatCacheAction, logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
+import { logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
 import { checkUnlimitedAccessAction } from '@/app/actions/admin-actions';
 import { AnalysisCard } from '@/components/AnalysisCard';
 import { AnalysisModal } from '@/components/AnalysisModal';
@@ -31,7 +31,8 @@ import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
 import AskTheAuntModal from '@/components/AskTheAuntModal';
 import AnalysisSpeedModal from '@/components/AnalysisSpeedModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon, LightbulbIcon } from '@/components/Icons';
-import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp, Gift, Hash } from 'lucide-react';
+import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp, Gift, Hash, LogOut, UserCircle2, LogIn } from 'lucide-react';
+import Link from 'next/link';
 import { 
   LOGO_URL, 
   TIER_CONFIG, 
@@ -44,7 +45,7 @@ import {
   LOADING_MESSAGES_PHASE_3
 } from '@/lib/constants';
 import { logClientError, isServerActionNotFoundError, getClientErrorMessage } from '@/lib/client-logger';
-import { getStoredTestAuthEmail } from '@/lib/auth';
+import { getStoredTestAuthEmail, logOut } from '@/lib/auth';
 import { isAllowedAdminEmail } from '@/lib/admin-identity';
 import { hasCompletedFullAnalysisOutput, hasCompletedSingleAnalysisOutput } from '@/lib/analysis-output';
 import { ANALYSIS_EXECUTION_TIMEOUT_MS, ANALYSIS_TIMEOUT_ERROR_MESSAGE } from '@/lib/analysis-timeout';
@@ -69,7 +70,7 @@ type PendingAnalysisRequest =
   | { kind: 'askAunt'; mode: 'person' | 'general' };
 
 export default function HomePage() {
-  const AUTH_DISABLED_FOR_TESTING = true;
+  const AUTH_DISABLED_FOR_TESTING = false;
   const ASK_THE_AUNT_MAX_EXTRA_FILES = 3;
   const ASK_AUNT_GENERAL_RESULT_KEY = '__ASK_AUNT_GENERAL__';
   const ANALYSIS_FAILURE_QUOTA_MESSAGE = 'הניתוח לא הושלם, ולכן הוא לא ייגרע ממכסת הניתוחים שלך.';
@@ -144,7 +145,7 @@ export default function HomePage() {
       setTestAuthEmail(storedEmail);
       setAuthChecking(false);
       setIsAdmin(isAllowedAdminEmail(storedEmail));
-      setSelectedTier('super');
+      // Don't set tier - let it stay as 'free' for non-logged-in users
       return;
     }
 
@@ -169,11 +170,8 @@ export default function HomePage() {
         
         // Check user's tier for analysis limits
         checkUnlimitedAccessAction(user.uid).then(result => {
-          if (result.hasUnlimited) {
-            // User has unlimited access via promo code
-            setSelectedTier('super');
-          } else if (result.tier) {
-            // Set tier based on their actual tier from Firestore
+          if (result.tier) {
+            // Set tier directly from Firestore (handles free/basic/super/friends + expiry)
             setSelectedTier(result.tier as UserTier);
           }
         }).catch(err => {
@@ -206,7 +204,7 @@ export default function HomePage() {
 
   const isAnalyzing = loading;
 
-  const logUpload = async (participantsCount: number, anonymizedText: string, tokenCount: number, chatCode?: string | null) => {
+  const logUpload = async (participantsCount: number, anonymizedText: string, tokenCount: number) => {
     if (!authUser) return;
     try {
       const data = await logUploadAction(authUser.uid, participantsCount, tokenCount);
@@ -576,16 +574,19 @@ export default function HomePage() {
   };
 
   const renderPaidTierBadge = (positionClasses = 'top-4 left-4') => {
-    if (selectedTier !== 'basic' && selectedTier !== 'super') {
+    if (selectedTier !== 'basic' && selectedTier !== 'super' && selectedTier !== 'friends') {
       return null;
     }
 
+    const isFriendsTier = selectedTier === 'friends';
     const isSuperTier = selectedTier === 'super';
-    const badgeLabel = isSuperTier ? 'Super User' : 'Basic User';
-    const badgeClasses = isSuperTier
-      ? 'from-amber-500 to-orange-500 text-white shadow-amber-500/30'
-      : 'from-indigo-600 to-violet-600 text-white shadow-indigo-500/30';
-    const Icon = isSuperTier ? Star : Zap;
+    const badgeLabel = isFriendsTier ? 'Friends User' : isSuperTier ? 'Super User' : 'Basic User';
+    const badgeClasses = isFriendsTier
+      ? 'from-emerald-500 to-teal-500 text-white shadow-emerald-500/30'
+      : isSuperTier
+        ? 'from-amber-500 to-orange-500 text-white shadow-amber-500/30'
+        : 'from-indigo-600 to-violet-600 text-white shadow-indigo-500/30';
+    const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
 
     return (
       <div className={`fixed ${positionClasses} z-[60]`}>
@@ -597,7 +598,7 @@ export default function HomePage() {
     );
   };
 
-  const isPaidTier = selectedTier === 'basic' || selectedTier === 'super';
+  const isPaidTier = selectedTier === 'basic' || selectedTier === 'super' || selectedTier === 'friends';
   const hasVisibleAuthSession = !!authUser || !!testAuthEmail;
   const resolveAnalysisMode = (mode?: AnalysisDepthMode): AnalysisDepthMode => {
     if (!isPaidTier) {
@@ -927,8 +928,7 @@ export default function HomePage() {
     }
   };
 
-  const storeChat = async (text: string) => {
-    // Chat inputs and analysis outputs are intentionally kept out of persistent storage.
+  const storeChat = async (_text: string) => {
     setCachedOutputs({});
     setChatCode(null);
     return null;
@@ -984,10 +984,9 @@ export default function HomePage() {
       const estimatedTokens = Math.ceil(formattedAnonymizedText.length / 4);
 
       // Store chat and log upload only for authenticated users
-      let code = null;
       if (authUser) {
-        code = await storeChat(formattedAnonymizedText);
-        await logUpload(parsed.participants.length, formattedAnonymizedText, estimatedTokens, code);
+        await storeChat(formattedAnonymizedText);
+        await logUpload(parsed.participants.length, formattedAnonymizedText, estimatedTokens);
       }
 
       const deanonymize = (t: any): string => {
@@ -1134,10 +1133,6 @@ export default function HomePage() {
             originalWordCount = analysisResult.originalWordCount;
             // Update cache locally so subsequent calls use it
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString(), strategy, originalWordCount } }));
-            // Persist to storage
-            if (chatCode && authUser) {
-                updateChatCacheAction(authUser.uid, chatCode, cacheKey, result).catch(e => console.error('Failed to cache group dynamics', e));
-            }
         }
 
         const deanonymize = (t: any): string => {
@@ -1208,10 +1203,6 @@ export default function HomePage() {
 
             result = responseData.result ?? responseData;
             setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: result, timestamp: new Date().toISOString() } }));
-            // Persist to storage
-            if (chatCode && authUser) {
-                updateChatCacheAction(authUser.uid, chatCode, cacheKey, result).catch(e => console.error('Failed to cache romantic dynamics', e));
-            }
         }
 
         const deanonymize = (t: any): string => {
@@ -1303,10 +1294,6 @@ export default function HomePage() {
           originalWordCount = analysisResult.originalWordCount;
           // Update cache locally
           setCachedOutputs(prev => ({ ...prev, [cacheKey]: { output: rawResult, timestamp: new Date().toISOString(), strategy, originalWordCount } }));
-          // Persist to storage
-          if (chatCode && authUser) {
-              updateChatCacheAction(authUser.uid, chatCode, cacheKey, rawResult).catch(e => console.error('Failed to cache full analysis', e));
-          }
       }
       
       const deanonymize = (t: any): string => {
@@ -1488,7 +1475,7 @@ export default function HomePage() {
   if (isProcessingFile) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
-        {renderPaidTierBadge('top-16 left-4')}
+        {hasVisibleAuthSession && renderPaidTierBadge('top-16 left-4')}
         <div className="flex flex-col items-center space-y-8 max-w-sm w-full animate-fadeIn">
           <div className="relative">
             <div className="absolute inset-0 bg-blue-200 rounded-full animate-ping opacity-75 scale-150"></div>
@@ -1529,29 +1516,87 @@ export default function HomePage() {
   if (!chatData) {
     return (
       <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 overflow-x-hidden relative">
-        {renderPaidTierBadge()}
-        <AuthDetails />
 
-        {/* Top Header Bar - Only when logged in */}
-        {hasVisibleAuthSession && (
-          <div className="absolute top-0 left-0 right-0 z-50 px-4 py-2 sm:py-4 flex justify-end items-center gap-2">
-            <button
-              onClick={handleOpenPromoCodeModal}
-              type="button"
-              className="p-2 sm:p-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 backdrop-blur-sm hover:from-amber-600 hover:to-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
-              title="קוד חברים"
-            >
-              <Gift className="w-4 h-4 sm:w-5 sm:h-5" />
-            </button>
-            <button
-              onClick={() => router.push('/profile')}
-              className="hidden sm:flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-sm hover:bg-white text-slate-800 rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg border border-slate-200/50"
-            >
-              <User className="w-4 h-4" />
-              <span className="font-bold text-sm">הפרופיל שלי</span>
-            </button>
+        {/* Unified Top Nav Bar */}
+        <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-5 py-3">
+          {/* Left: Tier badge / Admin button */}
+          <div className="flex items-center gap-2">
+            {hasVisibleAuthSession && isAdmin && (
+              <button
+                type="button"
+                onClick={() => router.push('/admin')}
+                className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-slate-700 to-slate-900 px-3 py-1.5 text-xs font-bold text-white shadow-lg hover:from-slate-800 hover:to-black hover:scale-105 transition-all cursor-pointer"
+                title="Admin Dashboard"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span>Admin</span>
+              </button>
+            )}
+            {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
+              const isFriendsTier = selectedTier === 'friends';
+              const isSuperTier = selectedTier === 'super';
+              const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
+              const badgeClasses = isFriendsTier
+                ? 'from-emerald-500 to-teal-500 shadow-emerald-500/30'
+                : isSuperTier
+                  ? 'from-amber-500 to-orange-500 shadow-amber-500/30'
+                  : 'from-indigo-600 to-violet-600 shadow-indigo-500/30';
+              const label = isFriendsTier ? 'Friends User' : isSuperTier ? 'Super User' : 'Basic User';
+              return (
+                <div className={`inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r px-3 py-1.5 text-xs font-bold text-white shadow-lg ${badgeClasses}`}>
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{label}</span>
+                </div>
+              );
+            })()}
           </div>
-        )}
+
+          {/* Right: User actions */}
+          <div className="flex items-center gap-2">
+          {!hasVisibleAuthSession ? (
+            <Link
+              href="/login"
+              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-xl transition-all shadow-md hover:shadow-lg hover:scale-105 font-bold text-xs"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>התחברות</span>
+            </Link>
+          ) : (
+            <>
+              {/* Email pill */}
+              <div className="hidden sm:flex items-center gap-2 bg-white/80 backdrop-blur-md rounded-xl px-3 py-1.5 border border-white/30 shadow-sm">
+                <UserCircle2 className="w-4 h-4 text-indigo-500 shrink-0" />
+                <span className="text-xs font-medium text-slate-700 max-w-[140px] truncate">{visibleEmail}</span>
+              </div>
+              {/* Promo code */}
+              <button
+                onClick={handleOpenPromoCodeModal}
+                type="button"
+                className="p-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
+                title="קוד חברים"
+              >
+                <Gift className="w-4 h-4" />
+              </button>
+              {/* Profile */}
+              <button
+                onClick={() => router.push('/profile')}
+                className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg hover:scale-105 font-bold text-xs"
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>הפרופיל שלי</span>
+              </button>
+              {/* Sign out */}
+              <button
+                onClick={logOut}
+                className="p-2 bg-white/80 backdrop-blur-md hover:bg-red-50 text-slate-500 hover:text-red-600 rounded-xl transition-all cursor-pointer shadow-sm hover:shadow-md border border-white/30"
+                title="Sign Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </>
+          )}
+          </div>
+        </div>
 
         {/* Hero Section */}
         <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-24 sm:pt-20 text-center text-slate-800">
@@ -2039,7 +2084,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
-      {renderPaidTierBadge('top-20 left-4')}
+      {hasVisibleAuthSession && renderPaidTierBadge('top-20 left-4')}
       <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
          <div 
            onClick={() => hasVisibleAuthSession && router.push('/profile')}
@@ -2275,20 +2320,7 @@ export default function HomePage() {
         />
       )}
 
-      <button
-        type="button"
-        onClick={() => router.push('/admin')}
-        className="fixed bottom-6 right-6 z-[120] inline-flex items-center gap-2 rounded-full bg-white/95 px-3 py-3 shadow-2xl ring-1 ring-slate-200 backdrop-blur-md transition-all hover:scale-105 hover:ring-indigo-300 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-300"
-        title="Admin Dashboard"
-        aria-label="Open admin dashboard"
-      >
-        <img
-          src={LOGO_URL}
-          className="h-8 w-8 rounded-full border-2 border-white shadow-sm"
-          alt="Admin"
-        />
-        <span className="text-sm font-bold text-slate-700">Admin</span>
-      </button>
+
 
       <div className="bg-white border-t border-slate-200 mt-20">
         <div className="max-w-5xl mx-auto px-4 py-12 text-center">

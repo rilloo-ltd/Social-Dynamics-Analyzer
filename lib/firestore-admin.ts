@@ -391,18 +391,14 @@ export function getAdminDb() {
 // Firestore structure:
 // users/{userId}/
 //   - dailyStats: { date, uploadCount, lastUpload }
-//   - chats/{chatCode}: { text, timestamp, outputs }
 //   - uploads/{uploadId}: { timestamp, participantsCount, tokensCount }
 //   - sessions/{sessionId}: { shares[], images[], feedback }
-//   - referralCodes/{codeId}: { code, usesRemaining, usedBy[] }
 // 
 // globalStats/
 //   - buttonPresses: { buttonId: count }
 //   - geminiUsage/{usageId}: { timestamp, inputTokens, outputTokens, model }
-//   - participantAxisSummary: anonymous score distributions per axis
 //
-// participantAxisObservations/{observationId}
-//   - liberalism, calmness, rationalism, humor, sourceType, createdAt
+// referralCodes/{code}: { code, generatedBy, userName, usesRemaining, usedBy[] }
 
 const PARTICIPANT_AXIS_KEYS: ParticipantAxisKey[] = ['liberalism', 'calmness', 'rationalism', 'humor'];
 const PARTICIPANT_AXIS_MIN = 1;
@@ -518,46 +514,6 @@ function isValidFirestoreDocumentId(id: string): boolean {
   // Check for invalid characters (only allow alphanumeric, dash, underscore)
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) return false;
   return true;
-}
-
-/**
- * Generate a unique, Firestore-safe chat code from text content
- * Uses SHA-256 hash to ensure compatibility with Firestore document IDs
- */
-export function generateChatCode(text: string): string {
-  if (!text || !text.trim()) {
-    return '';
-  }
-  
-  // Use Node.js crypto to generate a hash
-  const crypto = require('crypto');
-  const hash = crypto.createHash('sha256').update(text).digest('hex');
-  
-  // Take first 32 characters for a reasonable document ID length
-  // This is URL-safe and Firestore-compatible (only hex chars: 0-9, a-f)
-  const code = hash.substring(0, 32);
-  
-  // Validate (should always pass, but defensive check)
-  if (!isValidFirestoreDocumentId(code)) {
-    logger.error('Generated invalid Firestore document ID', { code });
-    throw new Error('Failed to generate valid chat code');
-  }
-  
-  return code;
-}
-
-// ============ CHAT OPERATIONS ============
-
-export async function storeChat(userId: string, chatCode: string, textLength: number, clearOutputs: boolean = false) {
-  return chatCode;
-}
-
-export async function getChat(userId: string, chatCode: string) {
-  return null;
-}
-
-export async function updateChatOutput(userId: string, chatCode: string, type: string, output: any) {
-  return;
 }
 
 export async function recordParticipantAxisScores(
@@ -724,9 +680,10 @@ export async function resetDailyUploadLimit(userId: string) {
 }
 
 export async function updateUserTier(
-  userId: string, 
-  tier: 'free' | 'basic' | 'super',
-  maxDailyUploads: number
+  userId: string,
+  tier: 'free' | 'basic' | 'super' | 'friends',
+  maxDailyUploads: number,
+  tierExpiresAt?: string | null
 ) {
   const db = getAdminDb();
   
@@ -734,6 +691,7 @@ export async function updateUserTier(
     await db.collection('users').doc(userId).set({
       tier,
       maxDailyUploads,
+      tierExpiresAt: tierExpiresAt ?? null,
       updatedAt: new Date().toISOString()
     }, { merge: true });
     
@@ -746,7 +704,7 @@ export async function updateUserTier(
 }
 
 export async function getUserTier(userId: string): Promise<{
-  tier: 'free' | 'basic' | 'super';
+  tier: 'free' | 'basic' | 'super' | 'friends';
   maxDailyUploads: number;
 }> {
   const db = getAdminDb();
@@ -782,8 +740,21 @@ export async function getUserTier(userId: string): Promise<{
     }
 
     const tier = data?.tier || 'free';
+    const tierExpiresAt: string | null = data?.tierExpiresAt || null;
+
+    // Check if time-limited tier has expired
+    if (tier === 'friends' && tierExpiresAt && new Date(tierExpiresAt) < new Date()) {
+      await userRef.set({
+        tier: 'free',
+        maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT,
+        tierExpiresAt: null,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      return { tier: 'free', maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT };
+    }
+
     const resolvedMaxDailyUploads =
-      tier === 'super'
+      tier === 'super' || tier === 'friends'
         ? SUPER_TIER_UPLOAD_LIMIT
         : tier === 'basic'
           ? Number(data?.maxDailyUploads || 10)
@@ -1162,66 +1133,6 @@ export async function logGeminiUsageDetailed({
   });
 }
 
-// ============ REFERRAL CODES ============
-
-export async function generateReferralCode(userId: string, userName: string, code: string, uses: number = 3) {
-  const db = getAdminDb();
-  
-  await db.collection('users').doc(userId).collection('referralCodes').doc(code).set({
-    code,
-    generatedBy: userId,
-    userName,
-    usesRemaining: uses,
-    usedBy: [],
-    createdAt: new Date().toISOString()
-  });
-  
-  return code;
-}
-
-export async function validateReferralCode(code: string) {
-  const db = getAdminDb();
-  
-  // Search for the code across all users
-  // This requires a composite query or a global referral codes collection
-  // For simplicity, we'll create a global collection
-  const codeDoc = await db.collection('referralCodes').doc(code).get();
-  
-  if (!codeDoc.exists) {
-    return { valid: false };
-  }
-  
-  const data = codeDoc.data();
-  return {
-    valid: data.usesRemaining > 0,
-    usesRemaining: data.usesRemaining
-  };
-}
-
-export async function useReferralCode(code: string, userId: string) {
-  const db = getAdminDb();
-  
-  const codeRef = db.collection('referralCodes').doc(code);
-  const codeDoc = await codeRef.get();
-  
-  if (!codeDoc.exists) {
-    throw new Error('Code not found');
-  }
-  
-  const data = codeDoc.data();
-  
-  if (data.usesRemaining <= 0) {
-    throw new Error('Code has no uses remaining');
-  }
-  
-  await codeRef.update({
-    usesRemaining: data.usesRemaining - 1,
-    usedBy: [...(data.usedBy || []), { userId, timestamp: new Date().toISOString() }]
-  });
-  
-  return { success: true };
-}
-
 export async function createGlobalReferralCode(userId: string, userName: string, code: string, uses: number = 3) {
   const db = getAdminDb();
   
@@ -1251,7 +1162,6 @@ export async function getAllStats() {
   
   const uploads: any[] = [];
   const sessions: any = {};
-  const chats: any[] = [];
   
   for (const userDoc of usersSnapshot.docs) {
     const userId = userDoc.id;
@@ -1274,43 +1184,14 @@ export async function getAllStats() {
         userId
       };
     });
-    
-    // Get user's chats
-    const chatsSnapshot = await db.collection('users').doc(userId).collection('chats').get();
-    chatsSnapshot.forEach((doc: any) => {
-      chats.push({
-        ...doc.data(),
-        userId
-      });
-    });
   }
   
   return {
     uploads,
     buttonPresses: buttonPressesDoc.exists ? buttonPressesDoc.data() : {},
     geminiUsage: geminiUsageSnapshot.docs.map((doc: any) => doc.data()),
-    sessions,
-    chats
+    sessions
   };
-}
-
-export async function clearAllChats() {
-  const db = getAdminDb();
-  
-  const usersSnapshot = await db.collection('users').get();
-  
-  for (const userDoc of usersSnapshot.docs) {
-    const chatsSnapshot = await db.collection('users').doc(userDoc.id).collection('chats').get();
-    
-    const batch = db.batch();
-    chatsSnapshot.forEach((doc: any) => {
-      batch.delete(doc.ref);
-    });
-    
-    await batch.commit();
-  }
-  
-  return { success: true };
 }
 
 // ============ PROMPT MANAGEMENT ============

@@ -68,21 +68,24 @@ export async function requireAdminRequest(
 
     try {
       const decodedToken = await adminAuth.verifyIdToken(authHeader.substring(7));
+      const uid = decodedToken.uid;
       const email = normalizeEmail(decodedToken.email);
 
-      if (!isAllowedAdminEmail(email)) {
+      // Check Firestore isAdmin flag — set via scripts/set-admin.js or admin SDK
+      const userDoc = await getAdminDb().collection('users').doc(uid).get();
+      if (!userDoc.exists || userDoc.data()?.isAdmin !== true) {
         return {
           ok: false,
           response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }),
         };
       }
 
-      await syncAdminIdentity(decodedToken.uid, email);
+      await syncAdminIdentity(uid, email);
 
       return {
         ok: true,
         identity: {
-          uid: decodedToken.uid,
+          uid,
           email,
           authMode: 'firebase',
         },
