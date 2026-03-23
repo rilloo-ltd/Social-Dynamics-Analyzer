@@ -160,10 +160,11 @@ const detectDateOrder = (
     }
   }
 
+  // Default to MDY for US-style dates (like the user's example with AM/PM)
   return mdyEvidence > dmyEvidence ? 'MDY' : 'DMY';
 };
 
-const parseChatTimestamp = (dateStr: string, timeStr: string, preferredOrder: DateOrder): Date => {
+const parseChatTimestamp = (dateStr: string, timeStr: string, preferredOrder: DateOrder, ampm?: string): Date => {
   const dateParts = dateStr.split(/[./-]/);
   if (dateParts.length !== 3) {
     return new Date();
@@ -174,12 +175,22 @@ const parseChatTimestamp = (dateStr: string, timeStr: string, preferredOrder: Da
   let year = parseInt(dateParts[2], 10);
 
   const timeParts = timeStr.split(':');
-  const hours = parseInt(timeParts[0], 10);
+  let hours = parseInt(timeParts[0], 10);
   const minutes = parseInt(timeParts[1], 10);
   const seconds = timeParts[2] ? parseInt(timeParts[2], 10) : 0;
 
   if ([first, second, year, hours, minutes, seconds].some(Number.isNaN)) {
     return new Date();
+  }
+
+  // Handle 12-hour format with AM/PM
+  if (ampm) {
+    const isPM = ampm.toUpperCase() === 'PM';
+    if (isPM && hours !== 12) {
+      hours += 12;
+    } else if (!isPM && hours === 12) {
+      hours = 0;
+    }
   }
 
   year = normalizeYear(year);
@@ -213,8 +224,8 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
   // Map of Fingerprint -> Canonical Display Name (Initial strict dedupe)
   const fingerprintToName: Record<string, string> = {};
   
-  const iosRegex = /^\[(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}),?\s(\d{1,2}:\d{2}(?::\d{2})?)\]\s(.*?):\s?(.*)/;
-  const androidRegex = /^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}),?\s(\d{1,2}:\d{2}(?::\d{2})?)(?:\s?(?:AM|PM|am|pm))?\s[\-–]\s(.*?):\s?(.*)/;
+  const iosRegex = /^\[(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}),?\s(\d{1,2}:\d{2}(?::\d{2})?)(?:\s?(AM|PM|am|pm))?\]\s(.*?):\s?(.*)/;
+  const androidRegex = /^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}),?\s(\d{1,2}:\d{2}(?::\d{2})?)(?:\s?(AM|PM|am|pm))?\s[\-–]\s(.*?):\s?(.*)/;
 
   const detectedDateOrder = detectDateOrder(lines, iosRegex, androidRegex);
 
@@ -246,7 +257,7 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
     }
 
     if (match) {
-      const [_, dateStr, timeStr, rawSender, content] = match;
+      const [_, dateStr, timeStr, ampm, rawSender, content] = match;
       
       // Filter out system messages that look like senders
       if (rawSender.includes('This message was deleted') || rawSender.includes('הודעה זו נמחקה')) continue;
@@ -265,7 +276,7 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
       }
       const strictName = fingerprintToName[fingerprint];
 
-      const dateObj = parseChatTimestamp(dateStr, timeStr, detectedDateOrder);
+      const dateObj = parseChatTimestamp(dateStr, timeStr, detectedDateOrder, ampm);
 
       currentMessage = {
         date: dateObj,
