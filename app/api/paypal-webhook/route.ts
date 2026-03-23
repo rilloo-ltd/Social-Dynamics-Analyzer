@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminDb } from '@/lib/firestore-admin';
+import { getAdminDb, recordAnalyticsEvent } from '@/lib/firestore-admin';
+
+async function safeRecordPaymentEvent(event: Parameters<typeof recordAnalyticsEvent>[0]) {
+  try {
+    await recordAnalyticsEvent(event);
+  } catch (error) {
+    console.error('Failed to record PayPal webhook analytics event:', error);
+  }
+}
 
 // Verify PayPal webhook signature
 async function verifyWebhookSignature(
@@ -90,6 +98,15 @@ export async function POST(req: NextRequest) {
     // Verify webhook signature for security
     const isValid = await verifyWebhookSignature(req.headers, body);
     if (!isValid) {
+      await safeRecordPaymentEvent({
+        category: 'payment',
+        eventName: 'paypal_webhook_invalid_signature',
+        status: 'failed',
+        endpoint: '/api/paypal-webhook',
+        errorCode: 'invalid_signature',
+        message: 'Invalid PayPal webhook signature',
+        metadata: { eventType },
+      });
       console.error('[PayPal Webhook] Invalid signature - rejecting request');
       return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 });
     }
@@ -100,6 +117,14 @@ export async function POST(req: NextRequest) {
       case 'BILLING.SUBSCRIPTION.ACTIVATED':
         // Subscription activated - already handled in /api/paypal-subscription
         console.log(`[Webhook] Subscription activated: ${resource.id}`);
+        await safeRecordPaymentEvent({
+          category: 'payment',
+          eventName: 'subscription_activated',
+          status: 'completed',
+          endpoint: '/api/paypal-webhook',
+          message: 'PayPal webhook reported subscription activation',
+          metadata: { eventType, subscriptionId: resource.id || null },
+        });
         break;
 
       case 'BILLING.SUBSCRIPTION.RENEWED':
@@ -115,8 +140,36 @@ export async function POST(req: NextRequest) {
             currency: resource.amount?.currency || 'USD',
             timestamp: new Date().toISOString()
           });
+
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_renewed',
+            status: 'completed',
+            userId,
+            endpoint: '/api/paypal-webhook',
+            message: 'Subscription renewal payment recorded',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || resource.billing_agreement_id || null,
+              amount: parseFloat(resource.amount?.total || '0'),
+              currency: resource.amount?.currency || 'USD',
+            },
+          });
           
           console.log(`[Webhook] Payment recorded for user ${userId}`);
+        } else {
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_renewed',
+            status: 'failed',
+            endpoint: '/api/paypal-webhook',
+            errorCode: 'user_not_found',
+            message: 'Could not match renewal webhook to a user',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || resource.billing_agreement_id || null,
+            },
+          });
         }
         break;
 
@@ -128,7 +181,7 @@ export async function POST(req: NextRequest) {
           await db.collection('users').doc(cancelledUserId).update({
             subscriptionStatus: 'CANCELLED',
             tier: 'free',
-            maxDailyUploads: 2,
+            maxDailyUploads: 3,
             updatedAt: new Date().toISOString()
           });
           
@@ -137,8 +190,34 @@ export async function POST(req: NextRequest) {
             subscriptionId: resource.id,
             timestamp: new Date().toISOString()
           });
+
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_cancelled',
+            status: 'completed',
+            userId: cancelledUserId,
+            endpoint: '/api/paypal-webhook',
+            message: 'Subscription cancellation recorded from webhook',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || null,
+            },
+          });
           
           console.log(`[Webhook] Subscription cancelled for user ${cancelledUserId}`);
+        } else {
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_cancelled',
+            status: 'failed',
+            endpoint: '/api/paypal-webhook',
+            errorCode: 'user_not_found',
+            message: 'Could not match cancellation webhook to a user',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || null,
+            },
+          });
         }
         break;
 
@@ -150,11 +229,37 @@ export async function POST(req: NextRequest) {
           await db.collection('users').doc(suspendedUserId).update({
             subscriptionStatus: 'SUSPENDED',
             tier: 'free',
-            maxDailyUploads: 2,
+            maxDailyUploads: 3,
             updatedAt: new Date().toISOString()
+          });
+
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_suspended',
+            status: 'failed',
+            userId: suspendedUserId,
+            endpoint: '/api/paypal-webhook',
+            message: 'Subscription suspended webhook received',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || null,
+            },
           });
           
           console.log(`[Webhook] Subscription suspended for user ${suspendedUserId}`);
+        } else {
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_suspended',
+            status: 'failed',
+            endpoint: '/api/paypal-webhook',
+            errorCode: 'user_not_found',
+            message: 'Could not match suspension webhook to a user',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || null,
+            },
+          });
         }
         break;
 
@@ -166,11 +271,37 @@ export async function POST(req: NextRequest) {
           await db.collection('users').doc(expiredUserId).update({
             subscriptionStatus: 'EXPIRED',
             tier: 'free',
-            maxDailyUploads: 2,
+            maxDailyUploads: 3,
             updatedAt: new Date().toISOString()
+          });
+
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_expired',
+            status: 'failed',
+            userId: expiredUserId,
+            endpoint: '/api/paypal-webhook',
+            message: 'Subscription expiration webhook received',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || null,
+            },
           });
           
           console.log(`[Webhook] Subscription expired for user ${expiredUserId}`);
+        } else {
+          await safeRecordPaymentEvent({
+            category: 'payment',
+            eventName: 'subscription_expired',
+            status: 'failed',
+            endpoint: '/api/paypal-webhook',
+            errorCode: 'user_not_found',
+            message: 'Could not match expiration webhook to a user',
+            metadata: {
+              eventType,
+              subscriptionId: resource.id || null,
+            },
+          });
         }
         break;
 
@@ -180,6 +311,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
+    await safeRecordPaymentEvent({
+      category: 'payment',
+      eventName: 'paypal_webhook_failed',
+      status: 'failed',
+      endpoint: '/api/paypal-webhook',
+      errorCode: 'server_error',
+      message: error instanceof Error ? error.message : 'Webhook processing failed',
+    });
     console.error('Webhook processing error:', error);
     return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 });
   }

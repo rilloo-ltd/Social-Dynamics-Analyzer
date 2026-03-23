@@ -17,8 +17,7 @@ import {
   AlertCircle,
   LogOut,
   Zap,
-  Crown,
-  Lock
+  Crown
 } from 'lucide-react';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
@@ -32,6 +31,7 @@ interface UserData {
   nextBillingDate?: string;
   subscriptionStartDate?: string;
   uploadsToday?: number;
+  totalUploadsUsed?: number;
 }
 
 interface Transaction {
@@ -66,6 +66,7 @@ export default function ProfilePage() {
             tier: 'super',
             maxDailyUploads: 50,
             uploadsToday: 0,
+            totalUploadsUsed: 0,
           });
           setTransactions([]);
           setLoading(false);
@@ -105,7 +106,8 @@ export default function ProfilePage() {
       if (data.success) {
         setUserData({
           ...data.userData,
-          uploadsToday: data.uploadsToday || 0
+          uploadsToday: data.uploadsToday || 0,
+          totalUploadsUsed: data.userData?.totalUploadsUsed || 0,
         });
         setTransactions(data.transactions || []);
       }
@@ -207,7 +209,7 @@ export default function ProfilePage() {
           label: 'חינם',
           color: 'from-slate-500 to-slate-600',
           icon: <AlertCircle className="w-6 h-6" />,
-          description: '2 ניתוחים ביום'
+          description: '3 ניתוחים חינמיים בסך הכול'
         };
     }
   };
@@ -241,6 +243,10 @@ export default function ProfilePage() {
   };
 
   const tierConfig = getTierConfig(userData?.tier || 'free');
+  const isFreeTier = userData?.tier === 'free';
+  const currentUsageCount = isFreeTier ? (userData?.totalUploadsUsed || 0) : (userData?.uploadsToday || 0);
+  const usageLimit = userData?.maxDailyUploads || 0;
+  const remainingUsage = Math.max(0, usageLimit - currentUsageCount);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 relative overflow-hidden">
@@ -261,16 +267,6 @@ export default function ProfilePage() {
               className="h-12 w-12 rounded-full cursor-pointer hover:scale-105 transition-transform"
               onClick={() => router.push('/')}
             />
-            {isAdmin && (
-              <button
-                onClick={() => router.push('/admin/prompts')}
-                className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-bold rounded-lg transition-all cursor-pointer shadow-md"
-                title="Admin Panel"
-              >
-                <Lock className="w-4 h-4" />
-                <span>Admin</span>
-              </button>
-            )}
           </div>
           <button
             onClick={handleLogout}
@@ -315,7 +311,9 @@ export default function ProfilePage() {
                 {tierConfig.icon}
                 <div>
                   <div className="text-xl font-bold">{tierConfig.label}</div>
-                  <div className="text-sm opacity-90">{userData?.maxDailyUploads} ניתוחים ביום</div>
+                  <div className="text-sm opacity-90">
+                    {isFreeTier ? `${usageLimit} ניתוחים חינמיים בסך הכול` : `${usageLimit} ניתוחים ביום`}
+                  </div>
                 </div>
               </div>
               {userData?.subscriptionStatus && (
@@ -326,22 +324,26 @@ export default function ProfilePage() {
               )}
             </div>
 
-            {/* Daily Usage Tracker */}
+            {/* Usage Tracker */}
             <div className="mt-4 bg-white/20 rounded-xl p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-bold">שימוש יומי</span>
-                <span className="text-sm font-bold">{userData?.uploadsToday || 0} / {userData?.maxDailyUploads}</span>
+                <span className="text-sm font-bold">{isFreeTier ? 'שימוש חינמי כולל' : 'שימוש יומי'}</span>
+                <span className="text-sm font-bold">{currentUsageCount} / {usageLimit}</span>
               </div>
               <div className="w-full bg-white/20 rounded-full h-3 overflow-hidden">
                 <div 
                   className="bg-white h-full rounded-full transition-all duration-500"
                   style={{ 
-                    width: `${Math.min(100, ((userData?.uploadsToday || 0) / (userData?.maxDailyUploads || 1)) * 100)}%` 
+                    width: `${Math.min(100, (currentUsageCount / Math.max(usageLimit, 1)) * 100)}%` 
                   }}
                 ></div>
               </div>
               <div className="mt-2 text-xs opacity-80">
-                נותרו {Math.max(0, (userData?.maxDailyUploads || 0) - (userData?.uploadsToday || 0))} ניתוחים היום
+                {isFreeTier
+                  ? (remainingUsage > 0
+                      ? `נותרו ${remainingUsage} ניתוחים חינמיים בסך הכול`
+                      : 'הניתוחים החינמיים שלך הסתיימו. כדי להמשיך לקבל ניתוחים נוספים צריך מנוי.')
+                  : `נותרו ${remainingUsage} ניתוחים היום`}
               </div>
             </div>
 
@@ -464,8 +466,8 @@ export default function ProfilePage() {
           onUpgrade={(tier) => {
             fetchUserData(user?.uid || '');
           }}
-          currentCount={userData?.uploadsToday || 0}
-          maxUploads={userData?.maxDailyUploads || 2}
+          currentCount={currentUsageCount}
+          maxUploads={userData?.maxDailyUploads || 3}
           userId={user?.uid}
         />
       </PayPalScriptProvider>

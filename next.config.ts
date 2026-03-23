@@ -1,8 +1,15 @@
 import type { NextConfig } from 'next';
 
+const projectRoot = process.cwd();
+
 const nextConfig: NextConfig = {
   // Enable Turbopack (default in Next.js 16)
   // Use --webpack flag to opt out if needed
+  turbopack: {
+    root: projectRoot,
+  },
+
+  outputFileTracingRoot: projectRoot,
   
   // Path aliases matching tsconfig.json
   // Next.js automatically reads from tsconfig paths

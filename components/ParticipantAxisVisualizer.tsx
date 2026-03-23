@@ -32,6 +32,34 @@ interface ParticipantAxisChampion {
 
 const AXIS_ORDER: ParticipantAxisVisualKey[] = ['liberalism', 'calmness', 'rationalism', 'humor'];
 
+const COPY = {
+  liberalism: 'ליברליזם',
+  calmness: 'רוגע',
+  rationalism: 'רציונליות',
+  humor: 'הומור',
+  participant: 'משתתף',
+  visualProfile: 'פרופיל חזותי',
+  axesTitle: 'מפת הצירים של המשתתפים',
+  axesDescription: 'לכל משתתף מוצג מבט מהיר על הציונים, יחד עם הטקסט המסביר איך הוא ממוקם ביחס לשאר האוכלוסייה.',
+  championsTitle: 'אלופי הקבוצה לפי ציר',
+  championsDescription: 'מי קיבל את הציון הגבוה ביותר בכל אחד מארבעת הצירים.',
+  sharePosterDescription: 'כל המשתתפים וכל הציונים בתמונה אחת קומפקטית, כדי שאפשר יהיה לשתף בקלות ולקרוא גם מהטלפון.',
+  sharePosterChampionsDescription: 'מבט מהיר על המשתתפים שקיבלו את הציון הגבוה ביותר בכל אחד מארבעת הצירים.',
+  firstPlace: 'במקום הראשון',
+  tiedFirstPlace: 'שוויון במקום הראשון',
+  championLiberalism: 'הכי ליברלי',
+  championCalmness: 'הכי רגוע',
+  championRationalism: 'הכי רציונלי',
+  championHumor: 'הכי מצחיק',
+} as const;
+
+const AXIS_CHAMPION_LABELS: Record<ParticipantAxisVisualKey, string> = {
+  liberalism: COPY.championLiberalism,
+  calmness: COPY.championCalmness,
+  rationalism: COPY.championRationalism,
+  humor: COPY.championHumor,
+};
+
 const AXIS_THEME: Record<
   ParticipantAxisVisualKey,
   {
@@ -45,7 +73,7 @@ const AXIS_THEME: Record<
   }
 > = {
   liberalism: {
-    label: 'ליברליזם',
+    label: COPY.liberalism,
     chipClassName: 'border-cyan-200 bg-cyan-50 text-cyan-700',
     textClassName: 'text-cyan-700',
     barClassName: 'from-cyan-400 to-sky-500',
@@ -54,7 +82,7 @@ const AXIS_THEME: Record<
     glowColor: 'rgba(34, 211, 238, 0.35)',
   },
   calmness: {
-    label: 'רוגע',
+    label: COPY.calmness,
     chipClassName: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     textClassName: 'text-emerald-700',
     barClassName: 'from-emerald-400 to-teal-500',
@@ -63,7 +91,7 @@ const AXIS_THEME: Record<
     glowColor: 'rgba(16, 185, 129, 0.30)',
   },
   rationalism: {
-    label: 'רציונליות',
+    label: COPY.rationalism,
     chipClassName: 'border-violet-200 bg-violet-50 text-violet-700',
     textClassName: 'text-violet-700',
     barClassName: 'from-violet-400 to-fuchsia-500',
@@ -72,7 +100,7 @@ const AXIS_THEME: Record<
     glowColor: 'rgba(139, 92, 246, 0.30)',
   },
   humor: {
-    label: 'הומור',
+    label: COPY.humor,
     chipClassName: 'border-amber-200 bg-amber-50 text-amber-700',
     textClassName: 'text-amber-700',
     barClassName: 'from-amber-400 to-orange-500',
@@ -168,8 +196,8 @@ const ParticipantAxisCard = ({
 
       <div className="relative z-10">
         <div className="mb-4 min-w-0 text-right">
-          <div className="mb-1 text-[11px] font-bold tracking-[0.18em] text-slate-400">משתתף</div>
-          <h4 className="text-lg font-black leading-6 text-slate-900 break-words">{participant.participantName}</h4>
+          <div className="mb-1 text-[11px] font-bold tracking-[0.18em] text-slate-400">{COPY.participant}</div>
+          <h4 className="break-words text-lg font-black leading-6 text-slate-900">{participant.participantName}</h4>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -187,27 +215,26 @@ const ParticipantAxisCard = ({
 
 const AxisChampionCard = ({ champion }: { champion: ParticipantAxisChampion }) => {
   const axisTheme = AXIS_THEME[champion.axisKey];
-  const winnerLabel = champion.participantNames.join(' · ');
+  const championLabel = AXIS_CHAMPION_LABELS[champion.axisKey];
+  const winnerLabel = champion.participantNames.join(' | ');
   const isTie = champion.participantNames.length > 1;
 
   return (
     <article className="relative overflow-hidden rounded-[1.5rem] border border-slate-200/80 bg-white/95 p-4 shadow-[0_18px_45px_-34px_rgba(15,23,42,0.28)]">
-      <div
-        className={`absolute inset-x-4 top-0 h-1 rounded-b-full bg-gradient-to-r ${axisTheme.barClassName}`}
-      />
+      <div className={`absolute inset-x-4 top-0 h-1 rounded-b-full bg-gradient-to-r ${axisTheme.barClassName}`} />
       <div className="relative z-10 text-right">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className={`rounded-full border px-2.5 py-1 text-xs font-bold ${axisTheme.chipClassName}`}>
             {champion.score}/10
           </div>
-          <div className={`text-base font-black ${axisTheme.textClassName}`}>אלוף ה{axisTheme.label}</div>
+          <div className={`text-base font-black ${axisTheme.textClassName}`}>{championLabel}</div>
         </div>
 
         <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
           <div className="mb-1 text-[11px] font-bold tracking-[0.16em] text-slate-400">
-            {isTie ? 'שוויון במקום הראשון' : 'במקום הראשון'}
+            {isTie ? COPY.tiedFirstPlace : COPY.firstPlace}
           </div>
-          <div className="text-lg font-black leading-6 text-slate-900 break-words">{winnerLabel}</div>
+          <div className="break-words text-lg font-black leading-6 text-slate-900">{winnerLabel}</div>
         </div>
       </div>
     </article>
@@ -264,9 +291,9 @@ const SharePosterParticipantCard = ({
       <div className="relative z-10">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold tracking-[0.18em] text-slate-500">
-            משתתף
+            {COPY.participant}
           </div>
-          <h4 className="min-w-0 text-right text-[2rem] font-black leading-9 text-slate-900 break-words">
+          <h4 className="min-w-0 break-words text-right text-[2rem] font-black leading-9 text-slate-900">
             {participant.participantName}
           </h4>
         </div>
@@ -286,7 +313,8 @@ const SharePosterParticipantCard = ({
 
 const SharePosterChampionCard = ({ champion }: { champion: ParticipantAxisChampion }) => {
   const axisTheme = AXIS_THEME[champion.axisKey];
-  const winnerLabel = champion.participantNames.join(' · ');
+  const championLabel = AXIS_CHAMPION_LABELS[champion.axisKey];
+  const winnerLabel = champion.participantNames.join(' | ');
   const isTie = champion.participantNames.length > 1;
 
   return (
@@ -294,7 +322,7 @@ const SharePosterChampionCard = ({ champion }: { champion: ParticipantAxisChampi
       <div className={`absolute inset-x-5 top-0 h-1.5 rounded-b-full bg-gradient-to-r ${axisTheme.barClassName}`} />
       <div className="relative z-10 text-right">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <div className={`text-lg font-black ${axisTheme.textClassName}`}>אלוף ה{axisTheme.label}</div>
+          <div className={`text-lg font-black ${axisTheme.textClassName}`}>{championLabel}</div>
           <div className={`rounded-full border px-3 py-1.5 text-sm font-black ${axisTheme.chipClassName}`}>
             {champion.score}/10
           </div>
@@ -302,9 +330,9 @@ const SharePosterChampionCard = ({ champion }: { champion: ParticipantAxisChampi
 
         <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3.5">
           <div className="mb-1 text-[11px] font-bold tracking-[0.18em] text-slate-400">
-            {isTie ? 'שוויון במקום הראשון' : 'במקום הראשון'}
+            {isTie ? COPY.tiedFirstPlace : COPY.firstPlace}
           </div>
-          <div className="text-xl font-black leading-7 text-slate-900 break-words">{winnerLabel}</div>
+          <div className="break-words text-xl font-black leading-7 text-slate-900">{winnerLabel}</div>
         </div>
       </div>
     </article>
@@ -319,17 +347,18 @@ export const ParticipantAxisVisualizer: React.FC<ParticipantAxisVisualizerProps>
   const axisChampions = getAxisChampions(participants);
 
   return (
-    <section className="mt-10 overflow-hidden rounded-[2rem] border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-sky-50 p-5 shadow-[0_24px_70px_-40px_rgba(15,23,42,0.28)] sm:p-6">
+    <section
+      dir="rtl"
+      className="mt-10 overflow-hidden rounded-[2rem] border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-sky-50 p-5 shadow-[0_24px_70px_-40px_rgba(15,23,42,0.28)] sm:p-6"
+    >
       <div className="mb-6 flex flex-col gap-3 text-right sm:flex-row sm:items-end sm:justify-between">
         <div className="inline-flex w-fit items-center gap-2 self-end rounded-full border border-sky-200 bg-white/90 px-3 py-1.5 text-xs font-bold text-sky-700 shadow-sm">
           <span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-400 shadow-[0_0_14px_rgba(56,189,248,0.8)]" />
-          פרופיל חזותי
+          {COPY.visualProfile}
         </div>
         <div>
-          <h3 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">מפת הצירים של המשתתפים</h3>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
-            לכל משתתף מוצג מבט מהיר על הציונים, יחד עם הטקסט המסביר איך הוא ממוקם ביחס לשאר הנבדקים.
-          </p>
+          <h3 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">{COPY.axesTitle}</h3>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">{COPY.axesDescription}</p>
         </div>
       </div>
 
@@ -342,10 +371,8 @@ export const ParticipantAxisVisualizer: React.FC<ParticipantAxisVisualizerProps>
       {axisChampions.length > 0 && (
         <div className="mt-8 border-t border-slate-200/80 pt-6">
           <div className="mb-4 text-right">
-            <h4 className="text-xl font-black text-slate-900">אלופי הקבוצה לפי ציר</h4>
-            <p className="mt-1 text-sm leading-6 text-slate-600">
-              מי קיבל את הציון הגבוה ביותר בכל אחד מארבעת הצירים.
-            </p>
+            <h4 className="text-xl font-black text-slate-900">{COPY.championsTitle}</h4>
+            <p className="mt-1 text-sm leading-6 text-slate-600">{COPY.championsDescription}</p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -377,23 +404,16 @@ export const ParticipantAxisSharePoster: React.FC<ParticipantAxisSharePosterProp
       <div className="mb-8 flex items-start justify-between gap-6">
         <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-sky-200 bg-white/92 px-4 py-2 text-sm font-bold text-sky-700 shadow-sm">
           <span className="inline-block h-3 w-3 rounded-full bg-sky-400 shadow-[0_0_16px_rgba(56,189,248,0.9)]" />
-          פרופיל חזותי
+          {COPY.visualProfile}
         </div>
 
         <div className="max-w-4xl text-right">
-          <h3 className="text-[2.8rem] font-black leading-[1.05] tracking-tight text-slate-950">
-            מפת הצירים של המשתתפים
-          </h3>
-          <p className="mt-3 text-lg leading-8 text-slate-600">
-            כל המשתתפים וכל הציונים בתמונה אחת קומפקטית, כדי שאפשר יהיה לשתף בקלות ולקרוא גם מהטלפון.
-          </p>
+          <h3 className="text-[2.8rem] font-black leading-[1.05] tracking-tight text-slate-950">{COPY.axesTitle}</h3>
+          <p className="mt-3 text-lg leading-8 text-slate-600">{COPY.sharePosterDescription}</p>
         </div>
       </div>
 
-      <div
-        className="grid gap-5"
-        style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
-      >
+      <div className="grid gap-5" style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}>
         {participants.map((participant, index) => (
           <SharePosterParticipantCard
             key={`${participant.participantName}-${index}`}
@@ -406,10 +426,8 @@ export const ParticipantAxisSharePoster: React.FC<ParticipantAxisSharePosterProp
       {axisChampions.length > 0 && (
         <div className="mt-8 border-t border-slate-200/80 pt-6">
           <div className="mb-4 text-right">
-            <h4 className="text-[1.8rem] font-black text-slate-900">אלופי הקבוצה לפי ציר</h4>
-            <p className="mt-1 text-base leading-7 text-slate-600">
-              מבט מהיר על המשתתפים שקיבלו את הציון הגבוה ביותר בכל אחד מארבעת הצירים.
-            </p>
+            <h4 className="text-[1.8rem] font-black text-slate-900">{COPY.championsTitle}</h4>
+            <p className="mt-1 text-base leading-7 text-slate-600">{COPY.sharePosterChampionsDescription}</p>
           </div>
 
           <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>

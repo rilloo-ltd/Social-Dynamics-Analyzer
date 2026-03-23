@@ -8,6 +8,7 @@ import {
   logFeedback as firestoreLogFeedback,
   logGeminiUsage
 } from '@/lib/firestore-admin';
+import { AnalysisDepthMode } from '@/types';
 
 export async function uploadChatAction(userId: string, chatCode: string, textLength: number, forceNew: boolean = false) {
   return { success: true, code: null, hasExistingOutputs: false, storageDisabled: true };
@@ -54,12 +55,30 @@ export async function logImageGenerationAction(userId: string, sessionId: string
   return { success: true };
 }
 
-export async function logFeedbackAction(userId: string, sessionId: string, rating: number, comment: string) {
+export async function logFeedbackAction(
+  userId: string,
+  sessionId: string,
+  rating: number,
+  comment: string,
+  analysisType?: string | null,
+  analysisMode?: AnalysisDepthMode | null,
+  tier?: string | null,
+  chatCode?: string | null
+) {
   if (!userId || !sessionId) {
     throw new Error('User ID and session ID required');
   }
 
-  await firestoreLogFeedback(userId, sessionId, rating, comment);
+  await firestoreLogFeedback({
+    userId,
+    sessionId,
+    rating,
+    comment,
+    analysisType,
+    analysisMode,
+    tier,
+    chatCode,
+  });
   return { success: true };
 }
 

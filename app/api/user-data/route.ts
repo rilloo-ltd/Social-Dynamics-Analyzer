@@ -65,13 +65,15 @@ export async function GET(req: NextRequest) {
         success: true, 
         userData: {
           tier: effectiveTier.tier,
-          maxDailyUploads: effectiveTier.maxDailyUploads
+          maxDailyUploads: effectiveTier.maxDailyUploads,
+          totalUploadsUsed: 0
         },
         transactions: []
       });
     }
 
     const userData = userDoc.data();
+    const totalUploadsUsed = typeof userData?.totalUploadsUsed === 'number' ? userData.totalUploadsUsed : 0;
 
     // Get transactions
     const transactionsSnapshot = await db
@@ -103,7 +105,8 @@ export async function GET(req: NextRequest) {
       userData: {
         ...userData,
         tier: effectiveTier.tier,
-        maxDailyUploads: effectiveTier.maxDailyUploads
+        maxDailyUploads: effectiveTier.maxDailyUploads,
+        totalUploadsUsed
       },
       transactions,
       uploadsToday

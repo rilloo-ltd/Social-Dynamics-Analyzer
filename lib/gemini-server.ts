@@ -26,10 +26,13 @@ import {
   getTotalTokenCount,
   getTotalWordCount
 } from './chat-utils';
+import { normalizeGeneratedText } from './analysis-text';
 import { getPrompt, type PromptKey } from './prompts';
 import {
+  estimateGeminiCostUsd,
   getParticipantAxisDistributionSummary,
   getPromptData,
+  logGeminiUsageDetailed,
   recordParticipantAxisScores
 } from './firestore-admin';
 
@@ -38,7 +41,6 @@ import {
 const FREE_ANALYSIS_MODEL = "gemini-3-flash-preview";
 const PAID_ANALYSIS_MODEL = "gemini-3-pro-preview";
 const UTILITY_GEMINI_MODEL = FREE_ANALYSIS_MODEL;
-const ASK_AUNT_MODEL = FREE_ANALYSIS_MODEL;
 const FREE_ANALYSIS_MAX_WORDS = 50000;
 const PAID_ANALYSIS_MAX_TOKENS = 200000;
 const ASK_AUNT_MAX_WORDS = 50000;
@@ -50,6 +52,13 @@ const ASK_AUNT_PROMPT_INJECTION_PATTERNS = [
   /<\s*(system|assistant|developer|tool)\b/i,
   /\b(reveal|print|show|dump)\b.{0,40}\b(prompt|instructions?|chain of thought)\b/i,
 ];
+
+const PLAIN_TEXT_OUTPUT_RULES = `
+Formatting rules for every textual field in your response:
+- Return plain text only.
+- Never include HTML or XML tags such as <br>, <p>, <div>, <ul>, <ol>, or <li>.
+- Use actual newline characters for line breaks.
+`;
 
 const PARTICIPANT_AXIS_KEYS: ParticipantAxisKey[] = ['liberalism', 'calmness', 'rationalism', 'humor'];
 const PARTICIPANT_AXIS_MIN = 1;
@@ -263,7 +272,7 @@ const buildParticipantAxisSection = (
       const axisScore = score[axis];
       const percentileData = calculateParticipantAxisPercentile(summary, axis, axisScore);
       const percentileSentence = percentileData
-        ? `${percentileData.comparisonLabel} מ- ${percentileData.percentile}% מהנבדקים!`
+        ? `${percentileData.comparisonLabel} מ- ${percentileData.percentile}% מהאוכלוסייה!`
         : 'עדיין אין מספיק נתונים להשוואה רחבה.';
 
       return `- דירוג ה${PARTICIPANT_AXIS_META[axis].scoreLabel} הוא ${axisScore} מתוך 10. ${percentileSentence}`;
@@ -364,11 +373,7 @@ const getAnalysisModel = (tier?: UserTier | string, analysisMode?: AnalysisDepth
     return FREE_ANALYSIS_MODEL;
   }
 
-  if (analysisMode === 'standard') {
-    return FREE_ANALYSIS_MODEL;
-  }
-
-  if (tier === 'basic' || tier === 'super' || tier === 'advanced') {
+  if (analysisMode === 'deep' && (tier === 'basic' || tier === 'super' || tier === 'advanced')) {
     return PAID_ANALYSIS_MODEL;
   }
 
@@ -565,6 +570,64 @@ const cleanJson = (text: string): string => {
   return cleaned;
 };
 
+const normalizeModelText = (value: unknown): string => {
+  return typeof value === 'string' ? normalizeGeneratedText(value) : '';
+};
+
+interface GeminiTelemetryContext {
+  userId?: string | null;
+  userEmail?: string | null;
+  sessionId?: string | null;
+}
+
+interface GeminiCallTelemetry {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number | null;
+  durationMs: number;
+}
+
+const extractUsageTokens = (result: unknown): { inputTokens: number; outputTokens: number } => {
+  const usageMetadata = (result as any)?.usageMetadata || (result as any)?.response?.usageMetadata;
+
+  const inputTokens = Number(
+    usageMetadata?.promptTokenCount ??
+    usageMetadata?.inputTokenCount ??
+    usageMetadata?.inputTokens ??
+    0
+  );
+
+  const outputTokens = Number(
+    usageMetadata?.candidatesTokenCount ??
+    usageMetadata?.outputTokenCount ??
+    usageMetadata?.outputTokens ??
+    0
+  );
+
+  return {
+    inputTokens: Number.isFinite(inputTokens) ? inputTokens : 0,
+    outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
+  };
+};
+
+const createGeminiCallTelemetry = (
+  model: string,
+  startedAt: number,
+  result: unknown
+): GeminiCallTelemetry => {
+  const { inputTokens, outputTokens } = extractUsageTokens(result);
+  const durationMs = Date.now() - startedAt;
+
+  return {
+    model,
+    inputTokens,
+    outputTokens,
+    estimatedCostUsd: estimateGeminiCostUsd(model, inputTokens, outputTokens),
+    durationMs,
+  };
+};
+
 const getApiKey = async (): Promise<string> => {
   if (process.env.GEMINI_API_KEY) {
     return process.env.GEMINI_API_KEY;
@@ -597,7 +660,8 @@ export async function serverAnalyzeChatFull(
   targetUser: string,
   limit: number,
   tier: UserTier = 'free',
-  analysisMode?: AnalysisDepthMode
+  analysisMode?: AnalysisDepthMode,
+  telemetryContext?: GeminiTelemetryContext
 ): Promise<{
   personality: string;
   othersThoughts: string;
@@ -607,6 +671,7 @@ export async function serverAnalyzeChatFull(
   strategy?: ChunkingStrategy;
   originalWordCount?: number;
   originalTokenCount?: number;
+  telemetry?: GeminiCallTelemetry;
 }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
   const budget = getAnalysisBudget(tier);
@@ -664,10 +729,12 @@ ${chatContext}
 </chat_history>
 
 ${finalPrompt}
+${PLAIN_TEXT_OUTPUT_RULES}
 
 ${participantAxisInstruction}
 `;
 
+  const generationStartedAt = Date.now();
   const result = await ai.models.generateContent({
     model,
     contents: prompt,
@@ -686,6 +753,19 @@ ${participantAxisInstruction}
       }
     }
   });
+  const telemetry = createGeminiCallTelemetry(model, generationStartedAt, result);
+  await logGeminiUsageDetailed({
+    model: telemetry.model,
+    inputTokens: telemetry.inputTokens,
+    outputTokens: telemetry.outputTokens,
+    estimatedCostUsd: telemetry.estimatedCostUsd,
+    durationMs: telemetry.durationMs,
+    feature: 'individual_analysis',
+    endpoint: '/api/analyze-chat-full',
+    userId: telemetryContext?.userId || null,
+    userEmail: telemetryContext?.userEmail || null,
+    sessionId: telemetryContext?.sessionId || null,
+  });
   
   const rawText = result.text || "";
   const parsed = parseStructuredJsonObject(rawText);
@@ -697,10 +777,11 @@ ${participantAxisInstruction}
     
     // Fallback: return empty structure
     return {
-      personality: "מצטערים, התרחשה שגיאה בניתוח. אנא נסו שוב.",
+      personality: "×ž×¦×˜×¢×¨×™×, ×”×ª×¨×—×©×” ×©×’×™××” ×‘× ×™×ª×•×—. ×× × × ×¡×• ×©×•×‘.",
       othersThoughts: "",
       improvement: "",
       hiddenThoughts: "",
+      telemetry,
     };
   }
 
@@ -708,14 +789,15 @@ ${participantAxisInstruction}
   await recordParticipantAxisScores(participantAxisScores, 'individual_analysis');
 
   return {
-    personality: parsed.personality || "",
-    othersThoughts: parsed.othersThoughts || "",
-    improvement: parsed.improvement || "",
-    hiddenThoughts: parsed.hiddenThoughts || "",
+    personality: normalizeModelText(parsed.personality),
+    othersThoughts: normalizeModelText(parsed.othersThoughts),
+    improvement: normalizeModelText(parsed.improvement),
+    hiddenThoughts: normalizeModelText(parsed.hiddenThoughts),
     participantAxisScores,
     strategy,
     originalWordCount,
     originalTokenCount,
+    telemetry,
   };
 }
 
@@ -724,8 +806,9 @@ export async function serverAnalyzeGroupDynamics(
   selectedParticipants: string[] | undefined,
   limit: number,
   tier: UserTier = 'free',
-  analysisMode?: AnalysisDepthMode
-): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number }> {
+  analysisMode?: AnalysisDepthMode,
+  telemetryContext?: GeminiTelemetryContext
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number; telemetry?: GeminiCallTelemetry }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
   const budget = getAnalysisBudget(tier);
   const model = getAnalysisModel(tier, analysisMode);
@@ -744,20 +827,29 @@ export async function serverAnalyzeGroupDynamics(
 
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
-  const groupPromptKey = selectedParticipants && selectedParticipants.length > 0 
-    ? 'groupDynamicsWithParticipants' 
+  const allParticipantCodes = getParticipantCodesFromMessages(messages);
+  const allParticipantCodeSet = new Set(allParticipantCodes);
+  const requestedParticipantCodes = selectedParticipants
+    ?.map((participantCode) => participantCode?.trim())
+    .filter((participantCode): participantCode is string => Boolean(participantCode && allParticipantCodeSet.has(participantCode)));
+  const hasSelectedParticipantSubset = Boolean(requestedParticipantCodes && requestedParticipantCodes.length > 0);
+  const groupPromptKey = hasSelectedParticipantSubset
+    ? 'groupDynamicsWithParticipants'
     : 'groupDynamicsWithoutParticipants';
   const groupAnalysisPrompt = await getActivePrompt(groupPromptKey);
-  const participantCodes = getParticipantCodesFromMessages(messages);
+  const participantCodes = hasSelectedParticipantSubset
+    ? sortParticipantCodes(Array.from(new Set(requestedParticipantCodes)))
+    : allParticipantCodes;
   const participantAxisInstruction = buildParticipantAxisInstruction(participantCodes);
   
   // Replace template placeholders
-  const participantList = selectedParticipants && selectedParticipants.length > 0
-    ? selectedParticipants.join(", ")
+  const participantList = hasSelectedParticipantSubset
+    ? participantCodes.join(", ")
     : "";
   const finalPrompt = groupAnalysisPrompt
-    .replace(/\{\{PARTICIPANT_COUNT\}\}/g, selectedParticipants?.length?.toString() || "0")
+    .replace(/\{\{PARTICIPANT_COUNT\}\}/g, hasSelectedParticipantSubset ? participantCodes.length.toString() : "0")
     .replace(/\{\{PARTICIPANT_LIST\}\}/g, participantList);
+  const finalPromptWithFormatRules = `${finalPrompt}\n${PLAIN_TEXT_OUTPUT_RULES}`;
 
   const prompt = `
 ${systemInstruction}${samplingNote}
@@ -766,15 +858,16 @@ ${systemInstruction}${samplingNote}
 ${chatContext}
 </chat_history>
 
-${finalPrompt}
+${finalPromptWithFormatRules}
 
-החזירו את כל התשובה כ-JSON יחיד עם שני שדות:
-- analysisText: כל הטקסט המלא של הניתוח הקבוצתי, בדיוק בפורמט שהתבקשתם כבר להחזיר.
-- participantAxisScores: מערך ציוני המשתתפים.
+×”×—×–×™×¨×• ××ª ×›×œ ×”×ª×©×•×‘×” ×›-JSON ×™×—×™×“ ×¢× ×©× ×™ ×©×“×•×ª:
+- analysisText: ×›×œ ×”×˜×§×¡×˜ ×”×ž×œ× ×©×œ ×”× ×™×ª×•×— ×”×§×‘×•×¦×ª×™, ×‘×“×™×•×§ ×‘×¤×•×¨×ž×˜ ×©×”×ª×‘×§×©×ª× ×›×‘×¨ ×œ×”×—×–×™×¨.
+- participantAxisScores: ×ž×¢×¨×š ×¦×™×•× ×™ ×”×ž×©×ª×ª×¤×™×.
 
 ${participantAxisInstruction}
 `;
 
+  const generationStartedAt = Date.now();
   const result = await ai.models.generateContent({
     model,
     contents: prompt,
@@ -789,6 +882,20 @@ ${participantAxisInstruction}
         required: ['analysisText', 'participantAxisScores']
       }
     }
+  });
+
+  const telemetry = createGeminiCallTelemetry(model, generationStartedAt, result);
+  await logGeminiUsageDetailed({
+    model: telemetry.model,
+    inputTokens: telemetry.inputTokens,
+    outputTokens: telemetry.outputTokens,
+    estimatedCostUsd: telemetry.estimatedCostUsd,
+    durationMs: telemetry.durationMs,
+    feature: 'group_analysis',
+    endpoint: '/api/analyze-group-dynamics',
+    userId: telemetryContext?.userId || null,
+    userEmail: telemetryContext?.userEmail || null,
+    sessionId: telemetryContext?.sessionId || null,
   });
 
   const rawText = result.text || "";
@@ -806,10 +913,11 @@ ${participantAxisInstruction}
     const participantAxisSection = buildParticipantAxisSection(participantAxisScores, participantAxisSummary);
 
     return {
-      result: `${rawText || ""}${participantAxisSection}`,
+      result: `${normalizeGeneratedText(rawText || "")}${participantAxisSection}`,
       strategy,
       originalWordCount,
-      originalTokenCount
+      originalTokenCount,
+      telemetry
     };
   }
 
@@ -817,13 +925,14 @@ ${participantAxisInstruction}
   await recordParticipantAxisScores(participantAxisScores, 'group_dynamics');
   const participantAxisSummary = await getParticipantAxisDistributionSummary();
   const participantAxisSection = buildParticipantAxisSection(participantAxisScores, participantAxisSummary);
-  const analysisText = `${parsed.analysisText || ''}${participantAxisSection}`;
+  const analysisText = `${normalizeModelText(parsed.analysisText)}${participantAxisSection}`;
   
   return {
     result: analysisText,
     strategy,
     originalWordCount,
-    originalTokenCount
+    originalTokenCount,
+    telemetry
   };
 }
 
@@ -831,8 +940,9 @@ export async function serverAnalyzeRomanticDynamics(
   messages: ChatMessage[],
   limit: number,
   tier: UserTier = 'free',
-  analysisMode?: AnalysisDepthMode
-): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number }> {
+  analysisMode?: AnalysisDepthMode,
+  telemetryContext?: GeminiTelemetryContext
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number; telemetry?: GeminiCallTelemetry }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
   const budget = getAnalysisBudget(tier);
   const model = getAnalysisModel(tier, analysisMode);
@@ -852,6 +962,7 @@ export async function serverAnalyzeRomanticDynamics(
   // Load prompts dynamically
   const systemInstruction = await getSystemInstruction();
   const romanticAnalysisPrompt = await getActivePrompt('romanticDynamics');
+  const romanticPromptWithFormatRules = `${romanticAnalysisPrompt}\n${PLAIN_TEXT_OUTPUT_RULES}`;
   const participantCodes = getParticipantCodesFromMessages(messages);
   const participantAxisInstruction = buildParticipantAxisInstruction(participantCodes);
 
@@ -862,15 +973,16 @@ export async function serverAnalyzeRomanticDynamics(
   ${chatContext}
   </chat_history>
   
-  ${romanticAnalysisPrompt}
+  ${romanticPromptWithFormatRules}
 
-  החזירו את כל התשובה כ-JSON יחיד עם שני שדות:
-  - analysisText: כל הטקסט המלא של ניתוח הזוגיות, בדיוק בפורמט שהתבקשתם כבר להחזיר.
-  - participantAxisScores: מערך ציוני המשתתפים.
+  ×”×—×–×™×¨×• ××ª ×›×œ ×”×ª×©×•×‘×” ×›-JSON ×™×—×™×“ ×¢× ×©× ×™ ×©×“×•×ª:
+  - analysisText: ×›×œ ×”×˜×§×¡×˜ ×”×ž×œ× ×©×œ × ×™×ª×•×— ×”×–×•×’×™×•×ª, ×‘×“×™×•×§ ×‘×¤×•×¨×ž×˜ ×©×”×ª×‘×§×©×ª× ×›×‘×¨ ×œ×”×—×–×™×¨.
+  - participantAxisScores: ×ž×¢×¨×š ×¦×™×•× ×™ ×”×ž×©×ª×ª×¤×™×.
 
   ${participantAxisInstruction}
   `;
 
+  const generationStartedAt = Date.now();
   const result = await ai.models.generateContent({
     model,
     contents: prompt,
@@ -887,6 +999,20 @@ export async function serverAnalyzeRomanticDynamics(
     }
   });
 
+  const telemetry = createGeminiCallTelemetry(model, generationStartedAt, result);
+  await logGeminiUsageDetailed({
+    model: telemetry.model,
+    inputTokens: telemetry.inputTokens,
+    outputTokens: telemetry.outputTokens,
+    estimatedCostUsd: telemetry.estimatedCostUsd,
+    durationMs: telemetry.durationMs,
+    feature: 'romantic_analysis',
+    endpoint: '/api/analyze-romantic-dynamics',
+    userId: telemetryContext?.userId || null,
+    userEmail: telemetryContext?.userEmail || null,
+    sessionId: telemetryContext?.sessionId || null,
+  });
+
   const rawText = result.text || "";
   const parsed = parseStructuredJsonObject(rawText);
 
@@ -900,10 +1026,11 @@ export async function serverAnalyzeRomanticDynamics(
     await recordParticipantAxisScores(participantAxisScores, 'romantic_dynamics');
 
     return {
-      result: rawText || "",
+      result: normalizeGeneratedText(rawText || ""),
       strategy,
       originalWordCount,
-      originalTokenCount
+      originalTokenCount,
+      telemetry
     };
   }
 
@@ -911,18 +1038,22 @@ export async function serverAnalyzeRomanticDynamics(
   await recordParticipantAxisScores(participantAxisScores, 'romantic_dynamics');
   
   return {
-    result: parsed.analysisText || "",
+    result: normalizeModelText(parsed.analysisText),
     strategy,
     originalWordCount,
-    originalTokenCount
+    originalTokenCount,
+    telemetry
   };
 }
 
 export async function serverAskTheAunt(
   chatSections: ChatRecordSection[],
   targetUser: string | null,
-  userQuestion: string
-): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number }> {
+  userQuestion: string,
+  tier: UserTier = 'free',
+  analysisMode?: AnalysisDepthMode,
+  telemetryContext?: GeminiTelemetryContext
+): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; telemetry?: GeminiCallTelemetry }> {
   const sanitizedQuestion = sanitizeUserQuestion(userQuestion);
 
   if (!sanitizedQuestion) {
@@ -942,6 +1073,7 @@ export async function serverAskTheAunt(
   }
 
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
+  const model = getAnalysisModel(tier, analysisMode);
   const systemInstruction = await getSystemInstruction();
   const questionScope = targetUser ? `about ${targetUser}` : 'about the overall chat';
   const scopeNote = targetUser
@@ -950,6 +1082,7 @@ export async function serverAskTheAunt(
   const askTheAuntPrompt = (await getActivePrompt('askTheAunt'))
     .replace(/\{\{QUESTION_SCOPE\}\}/g, questionScope)
     .replace(/\{\{SCOPE_NOTE\}\}/g, scopeNote);
+  const askTheAuntPromptWithFormatRules = `${askTheAuntPrompt}\n${PLAIN_TEXT_OUTPUT_RULES}`;
   const chatHistory = serializeChatSections(limitedSections.sections);
   const multiChatNote = limitedSections.sections.length > 1
     ? `This context combines ${limitedSections.sections.length} separate chat records. Each labeled section is a different chat record.`
@@ -972,18 +1105,34 @@ ${chatHistory}
 ${sanitizedQuestion}
 </user_question>
 
-${askTheAuntPrompt}
+${askTheAuntPromptWithFormatRules}
 `;
 
+  const generationStartedAt = Date.now();
   const result = await ai.models.generateContent({
-    model: ASK_AUNT_MODEL,
+    model,
     contents: prompt
   });
 
+  const telemetry = createGeminiCallTelemetry(model, generationStartedAt, result);
+  await logGeminiUsageDetailed({
+    model: telemetry.model,
+    inputTokens: telemetry.inputTokens,
+    outputTokens: telemetry.outputTokens,
+    estimatedCostUsd: telemetry.estimatedCostUsd,
+    durationMs: telemetry.durationMs,
+    feature: 'ask_the_aunt',
+    endpoint: '/api/ask-the-aunt',
+    userId: telemetryContext?.userId || null,
+    userEmail: telemetryContext?.userEmail || null,
+    sessionId: telemetryContext?.sessionId || null,
+  });
+
   return {
-    result: result.text || '',
+    result: normalizeGeneratedText(result.text || ''),
     strategy: limitedSections.strategy,
-    originalWordCount: limitedSections.originalWordCount
+    originalWordCount: limitedSections.originalWordCount,
+    telemetry
   };
 }
 
@@ -994,14 +1143,14 @@ export async function serverSummarizeForSharing(analysisText: string): Promise<s
   const summarizationPrompt = await getActivePrompt('summarization');
   const finalPrompt = summarizationPrompt.replace(/\{\{ANALYSIS_TEXT\}\}/g, analysisText);
 
-  const prompt = finalPrompt;
+  const prompt = `${finalPrompt}\n\n${PLAIN_TEXT_OUTPUT_RULES}`;
 
   const result = await ai.models.generateContent({
     model: UTILITY_GEMINI_MODEL,
     contents: prompt
   });
   
-  return result.text || "";
+  return normalizeGeneratedText(result.text || "");
 }
 
 export async function serverGenerateCartoonImage(prompt: string): Promise<string> {
@@ -1099,7 +1248,7 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
       logger.warning('Vertex AI Imagen: Image blocked by content filters', {
         raiReason
       });
-      throw new Error('התמונה נחסמה על ידי מסנני התוכן של Google. נסה לנסח מחדש את הבקשה.');
+      throw new Error('×”×ª×ž×•× ×” × ×—×¡×ž×” ×¢×œ ×™×“×™ ×ž×¡× × ×™ ×”×ª×•×›×Ÿ ×©×œ Google. × ×¡×” ×œ× ×¡×— ×ž×—×“×© ××ª ×”×‘×§×©×”.');
     }
 
     // Check for image data - Imagen 4 uses bytesBase64Encoded as stringValue
@@ -1144,9 +1293,9 @@ export async function serverGetVisualAssetData(
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
 
   const visualAssetPrompt = await getActivePrompt('visualAssetData');
-  const prompt = visualAssetPrompt
+  const prompt = `${visualAssetPrompt
     .replace(/\{\{TITLE\}\}/g, title)
-    .replace(/\{\{ANALYSIS_TEXT\}\}/g, analysisText);
+    .replace(/\{\{ANALYSIS_TEXT\}\}/g, analysisText)}\n\n${PLAIN_TEXT_OUTPUT_RULES}`;
 
   const result = await ai.models.generateContent({
     model: UTILITY_GEMINI_MODEL,
@@ -1175,15 +1324,16 @@ export async function serverGetVisualAssetData(
     
     // Fallback data
     data = {
-      headline: "הניתוח הפסיכולוגי שלך",
-      points: ["ניתוח מפורט זמין בקרוב"],
+      headline: "×”× ×™×ª×•×— ×”×¤×¡×™×›×•×œ×•×’×™ ×©×œ×š",
+      points: ["× ×™×ª×•×— ×ž×¤×•×¨×˜ ×–×ž×™×Ÿ ×‘×§×¨×•×‘"],
       visualPrompt: "A friendly cartoon character in a bright, cheerful setting, 3D animated style"
     };
   }
   
   return {
-    headline: data.headline || "הניתוח הפסיכולוגי שלך",
+    headline: data.headline || "×”× ×™×ª×•×— ×”×¤×¡×™×›×•×œ×•×’×™ ×©×œ×š",
     points: data.points || [],
     visualPrompt: data.visualPrompt || "A friendly animal in a bright setting, 3D animated cartoon style"
   };
 }
+

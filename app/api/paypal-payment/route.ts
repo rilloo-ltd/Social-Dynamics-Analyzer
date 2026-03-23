@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { updateUserTier } from '@/lib/firestore-admin';
+import { getAdminDb, recordAnalyticsEvent, updateUserTier } from '@/lib/firestore-admin';
+
+async function safeRecordPaymentEvent(event: Parameters<typeof recordAnalyticsEvent>[0]) {
+  try {
+    await recordAnalyticsEvent(event);
+  } catch (error) {
+    console.error('Failed to record PayPal payment analytics event:', error);
+  }
+}
 
 // Verify PayPal payment on server-side
 async function verifyPayPalPayment(orderId: string): Promise<boolean> {
@@ -48,6 +56,17 @@ export async function POST(req: NextRequest) {
     const { userId, orderId, tier, amount } = await req.json();
 
     if (!userId || !orderId || !tier) {
+      await safeRecordPaymentEvent({
+        category: 'payment',
+        eventName: 'tier_purchase_failed',
+        status: 'failed',
+        userId: userId || null,
+        tier: tier || null,
+        endpoint: '/api/paypal-payment',
+        errorCode: 'missing_fields',
+        message: 'Missing required PayPal payment fields',
+        metadata: { orderId: orderId || null, amount: amount ?? null },
+      });
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
@@ -55,6 +74,17 @@ export async function POST(req: NextRequest) {
     const isValid = await verifyPayPalPayment(orderId);
 
     if (!isValid) {
+      await safeRecordPaymentEvent({
+        category: 'payment',
+        eventName: 'tier_purchase_failed',
+        status: 'failed',
+        userId,
+        tier,
+        endpoint: '/api/paypal-payment',
+        errorCode: 'verification_failed',
+        message: 'Payment verification failed',
+        metadata: { orderId, amount: amount ?? null },
+      });
       return NextResponse.json({ error: 'Payment verification failed' }, { status: 400 });
     }
 
@@ -65,12 +95,42 @@ export async function POST(req: NextRequest) {
     };
 
     if (amount !== expectedAmounts[tier as keyof typeof expectedAmounts]) {
+      await safeRecordPaymentEvent({
+        category: 'payment',
+        eventName: 'tier_purchase_failed',
+        status: 'failed',
+        userId,
+        tier,
+        endpoint: '/api/paypal-payment',
+        errorCode: 'invalid_amount',
+        message: 'Payment amount did not match expected tier price',
+        metadata: { orderId, amount },
+      });
       return NextResponse.json({ error: 'Invalid payment amount' }, { status: 400 });
     }
 
     // Update user tier in Firestore
     const maxUploads = tier === 'basic' ? 10 : 50;
     await updateUserTier(userId, tier as 'free' | 'basic' | 'super', maxUploads);
+    await getAdminDb().collection('users').doc(userId).collection('transactions').add({
+      type: 'tier_purchase',
+      orderId,
+      tier,
+      amount,
+      currency: 'USD',
+      timestamp: new Date().toISOString(),
+    });
+
+    await safeRecordPaymentEvent({
+      category: 'payment',
+      eventName: 'tier_purchase_completed',
+      status: 'completed',
+      userId,
+      tier,
+      endpoint: '/api/paypal-payment',
+      message: 'Tier purchase verified and applied',
+      metadata: { orderId, amount },
+    });
 
     console.log(`[PayPal] User ${userId} upgraded to ${tier} tier with order ${orderId}`);
 
@@ -81,6 +141,14 @@ export async function POST(req: NextRequest) {
       message: 'Payment verified and tier updated'
     });
   } catch (error) {
+    await safeRecordPaymentEvent({
+      category: 'payment',
+      eventName: 'tier_purchase_failed',
+      status: 'failed',
+      endpoint: '/api/paypal-payment',
+      errorCode: 'server_error',
+      message: error instanceof Error ? error.message : 'PayPal payment processing error',
+    });
     console.error('PayPal payment processing error:', error);
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }

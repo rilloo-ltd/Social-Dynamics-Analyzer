@@ -1,5 +1,6 @@
 
 import { ChatMessage, ParsedChat } from '../types';
+import { redactSensitiveContent } from './privacyRedaction';
 
 /**
  * Strips HTML-like tags from text to prevent XSS.
@@ -346,7 +347,9 @@ export const parseChatFile = async (text: string, onProgress?: (percent: number)
     if (!anonContent.trim()) continue;
     
     if (anonContent.length > 3) {
-       anonContent = scrubSensitiveData(anonContent);
+      const redactionResult = redactSensitiveContent(anonContent);
+      if (redactionResult.shouldDrop) continue;
+      anonContent = redactionResult.text;
     }
 
     if (masterNameRegex) {
