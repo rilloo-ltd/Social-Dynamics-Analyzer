@@ -69,6 +69,21 @@ type PendingAnalysisRequest =
   | { kind: 'analysis'; type: AnalysisType; participants?: string[]; bypassCache?: boolean }
   | { kind: 'askAunt'; mode: 'person' | 'general' };
 
+function CoCredit({ className }: { className?: string }) {
+  return (
+    <div className={`bg-white border-t border-slate-200 ${className ?? ''}`}>
+      <div className="max-w-5xl mx-auto px-4 py-12 text-center">
+        <p className="text-sm font-semibold tracking-[0.25em] text-teal-600/80 mb-4">
+          יצירה משותפת
+        </p>
+        <p className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">
+          הדודה היא יצירה משותפת של Rilloo וד&quot;ר רועי צזנה
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const AUTH_DISABLED_FOR_TESTING = false;
   const ASK_THE_AUNT_MAX_EXTRA_FILES = 3;
@@ -109,6 +124,7 @@ export default function HomePage() {
   const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: FREE_TIER_TOTAL_ANALYSES });
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [pendingAnalysis, setPendingAnalysis] = useState<{type: AnalysisType, participants?: string[]} | null>(null);
+  const [regeneratedAnalyses, setRegeneratedAnalyses] = useState<Set<string>>(new Set());
   const [currentAnalysisMode, setCurrentAnalysisMode] = useState<AnalysisDepthMode>('standard');
   const [activeGroupParticipants, setActiveGroupParticipants] = useState<string[] | null>(null);
   const [askTheAuntAnalysisMode, setAskTheAuntAnalysisMode] = useState<AnalysisDepthMode>('standard');
@@ -571,6 +587,7 @@ export default function HomePage() {
     setCachedOutputs({});
     setChatCode(null);
     resetAskTheAuntState();
+    setRegeneratedAnalyses(new Set());
   };
 
   const renderPaidTierBadge = (positionClasses = 'top-4 left-4') => {
@@ -943,6 +960,7 @@ export default function HomePage() {
 
   const handleFileLoaded = async (text: string) => {
     // Uploading a file never burns analysis quota. Quota is checked only when a real analysis starts.
+    setRegeneratedAnalyses(new Set());
     setIsProcessingFile(true);
     setProcessingProgress(0);
     setHighlights([]);
@@ -1340,6 +1358,12 @@ export default function HomePage() {
       setActiveAnalysisType(null); 
     }
     finally { setLoading(false); }
+  };
+
+  const getRegenKey = (type: AnalysisType): string => {
+    if (type === AnalysisType.GROUP_DYNAMICS) return 'GROUP';
+    if (type === AnalysisType.ROMANTIC_DYNAMICS) return 'ROMANTIC';
+    return selectedUser || '';
   };
 
   const requireAuth = (): boolean => {
@@ -2049,16 +2073,7 @@ export default function HomePage() {
             </div>
         </div>
 
-        <div className="bg-white border-t border-slate-200">
-          <div className="max-w-5xl mx-auto px-4 py-12 text-center">
-            <p className="text-sm font-semibold tracking-[0.25em] text-teal-600/80 mb-4">
-              יצירה משותפת
-            </p>
-            <p className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">
-              הדודה היא יצירה משותפת של Rilloo וד"ר רועי צזנה
-            </p>
-          </div>
-        </div>
+        <CoCredit />
 
         {/* Footer */}
         <footer className="bg-white border-t border-slate-200 py-8">
@@ -2337,13 +2352,18 @@ export default function HomePage() {
         onShare={(platform) => logShare(activeAnalysisType || 'UNKNOWN', platform)}
         onLogImageGeneration={logImageGeneration}
         onLogFeedback={logFeedback}
-        onRegenerate={activeAnalysisType === AnalysisType.ASK_AUNT ? undefined : async () => {
-          if (!activeAnalysisType) return;
-          const participants: string[] | undefined = activeAnalysisType === AnalysisType.GROUP_DYNAMICS
-            ? activeGroupParticipants || undefined
-            : undefined;
-          triggerAnalysis(activeAnalysisType, participants, true);
-        }}
+        onRegenerate={
+          activeAnalysisType === AnalysisType.ASK_AUNT ? undefined :
+          (activeAnalysisType && regeneratedAnalyses.has(getRegenKey(activeAnalysisType))) ? undefined :
+          async () => {
+            if (!activeAnalysisType) return;
+            setRegeneratedAnalyses(prev => new Set(prev).add(getRegenKey(activeAnalysisType!)));
+            const participants: string[] | undefined = activeAnalysisType === AnalysisType.GROUP_DYNAMICS
+              ? activeGroupParticipants || undefined
+              : undefined;
+            triggerAnalysis(activeAnalysisType, participants, true);
+          }
+        }
         analysisType={activeAnalysisType || undefined}
         groupParticipantFilter={activeAnalysisType === AnalysisType.GROUP_DYNAMICS ? activeGroupParticipants : null}
         chatCode={chatCode}
@@ -2421,16 +2441,7 @@ export default function HomePage() {
 
 
 
-      <div className="bg-white border-t border-slate-200 mt-20">
-        <div className="max-w-5xl mx-auto px-4 py-12 text-center">
-          <p className="text-sm font-semibold tracking-[0.25em] text-teal-600/80 mb-4">
-            יצירה משותפת
-          </p>
-          <p className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">
-            הדודה היא יצירה משותפת של Rilloo וד"ר רועי צזנה
-          </p>
-        </div>
-      </div>
+      <CoCredit className="mt-20" />
 
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 mt-20">

@@ -42,7 +42,41 @@ export async function redeemPromoCodeAction(userId: string, promoCode: string) {
     });
 
     if (!txResult.valid) {
-      return { success: false, message: txResult.message };
+      // Not a referral code — check credit codes
+      const creditTxResult = await db.runTransaction(async (tx: any) => {
+        const codeRef = db.collection('creditCodes').doc(normalizedCode);
+        const codeDoc = await tx.get(codeRef);
+
+        if (!codeDoc.exists) {
+          return { valid: false, message: 'קוד לא תקין. בדוק שהקוד נכתב נכון.' };
+        }
+
+        const data = codeDoc.data();
+        if (!data || data.usesRemaining <= 0) {
+          return { valid: false, message: 'הקוד כבר נוצל.' };
+        }
+
+        tx.update(codeRef, {
+          usesRemaining: data.usesRemaining - 1,
+          usedBy: [...(data.usedBy || []), { userId, timestamp: new Date().toISOString() }],
+        });
+
+        return { valid: true, credits: Number(data.credits) || 2 };
+      });
+
+      if (!creditTxResult.valid) {
+        return { success: false, message: creditTxResult.message };
+      }
+
+      const { addBonusUploadsToUser } = await import('@/lib/firestore-admin');
+      await addBonusUploadsToUser(userId, creditTxResult.credits);
+
+      logger.info('Credit code redeemed', { userId, code: normalizedCode, credits: creditTxResult.credits });
+
+      return {
+        success: true,
+        message: `✅ הקוד הופעל! ${creditTxResult.credits} ניתוחים נוספים נוספו לחשבונך לצמיתות.`,
+      };
     }
 
     // Grant friends tier for 7 days

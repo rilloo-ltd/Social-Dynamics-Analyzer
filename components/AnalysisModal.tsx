@@ -769,17 +769,7 @@ strong { font-weight: 700; color: #1e293b; }
 
                 {/* Regenerate Button - only when content exists */}
                 {onRegenerate && (
-                  <div className="mt-8 space-y-4">
-                    {/* Note for individual analysis types */}
-                    {analysisType !== AnalysisType.GROUP_DYNAMICS && (
-                      <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-center text-sm text-amber-800">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <strong>שימו לב:</strong> יצירת ניתוח מחדש תחליף את כל 4 הדוחות האישיים
-                      </div>
-                    )}
-                    
+                  <div className="mt-8">
                     <div className="flex justify-center">
                       <button 
                         onClick={onRegenerate}

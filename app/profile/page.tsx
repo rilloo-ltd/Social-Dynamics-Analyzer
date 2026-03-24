@@ -199,26 +199,79 @@ export default function ProfilePage() {
         return {
           label: 'מנוי בסיסי',
           color: 'from-blue-500 to-blue-600',
-          icon: <TrendingUp className="w-6 h-6" />
+          cardBg: 'from-blue-50 to-blue-100',
+          border: 'border-blue-200',
+          textMain: 'text-blue-900',
+          textSub: 'text-blue-800',
+          textMuted: 'text-blue-700',
+          icon: <TrendingUp className="w-6 h-6" />,
+          price: '$5',
+          period: 'לחודש',
+          quota: `${userData?.maxDailyUploads || 10} ניתוחים שבועיים`,
+          features: [
+            'ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר',
+            'שאילת שאלות על שיחות ווטסאפ',
+            'העלאת יותר משיחה אחת להצלבת עמדות',
+            'ניתוח דינמיקות קבוצתיות',
+          ],
         };
       case 'super':
         return {
           label: 'מנוי-על',
           color: 'from-purple-500 to-pink-600',
-          icon: <CreditCard className="w-6 h-6" />
+          cardBg: 'from-purple-50 to-pink-100',
+          border: 'border-purple-300',
+          textMain: 'text-purple-900',
+          textSub: 'text-purple-800',
+          textMuted: 'text-purple-700',
+          icon: <CreditCard className="w-6 h-6" />,
+          price: '$30',
+          period: 'לחודש',
+          quota: `${userData?.maxDailyUploads || 50} ניתוחים שבועיים`,
+          features: [
+            "גישה מוקדמת לפיצ'רים נוספים",
+            'ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר',
+            'שאילת שאלות על שיחות ווטסאפ',
+            'העלאת יותר משיחה אחת להצלבת עמדות',
+            'ניתוח דינמיקות קבוצתיות',
+          ],
         };
       case 'friends':
         return {
           label: 'גישת חברים',
           color: 'from-emerald-500 to-teal-600',
-          icon: <Gift className="w-6 h-6" />
+          cardBg: 'from-emerald-50 to-teal-50',
+          border: 'border-emerald-200',
+          textMain: 'text-emerald-900',
+          textSub: 'text-emerald-800',
+          textMuted: 'text-emerald-700',
+          icon: <Gift className="w-6 h-6" />,
+          price: '🎁',
+          period: 'הזמנה',
+          quota: 'ניתוחים ללא הגבלה',
+          features: [
+            'גישה בלתי מוגבלת לכל הניתוחים',
+            "כל פיצ'רי המנוי-על כלולים",
+          ],
         };
       default:
         return {
           label: 'חינם',
           color: 'from-slate-500 to-slate-600',
+          cardBg: 'from-slate-50 to-slate-100',
+          border: 'border-slate-200',
+          textMain: 'text-slate-800',
+          textSub: 'text-slate-700',
+          textMuted: 'text-slate-600',
           icon: <AlertCircle className="w-6 h-6" />,
-          description: '3 ניתוחים חינמיים בסך הכול'
+          price: '$0',
+          period: 'לתמיד',
+          quota: '3 ניתוחים חינמיים',
+          features: [
+            'ניתוחים בסיסיים',
+            'שאילת שאלות על שיחות ווטסאפ',
+            'ניתוח דינמיקות קבוצתיות',
+          ],
         };
     }
   };
@@ -257,6 +310,7 @@ export default function ProfilePage() {
   const currentUsageCount = isFreeTier ? (userData?.totalUploadsUsed || 0) : (userData?.uploadsToday || 0);
   const usageLimit = userData?.maxDailyUploads || 0;
   const remainingUsage = Math.max(0, usageLimit - currentUsageCount);
+  const isWeeklyTier = !isFreeTier && !isFriendsTier;
 
   const friendsDaysLeft = isFriendsTier && userData?.tierExpiresAt
     ? Math.max(0, Math.ceil((new Date(userData.tierExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
@@ -358,50 +412,72 @@ export default function ProfilePage() {
           )}
 
           {/* Subscription Status */}
-          <div className={`mb-8 p-6 bg-gradient-to-r ${tierConfig.color} rounded-2xl text-white`} dir="rtl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                {tierConfig.icon}
-                <div>
-                  <div className="text-xl font-bold">{tierConfig.label}</div>
-                  <div className="text-sm opacity-90">
-                    {isFreeTier ? `${usageLimit} ניתוחים חינמיים בסך הכול` : `${usageLimit} ניתוחים ביום`}
-                  </div>
-                </div>
+          <div className={`mb-8 rounded-3xl border-2 ${tierConfig.border} bg-gradient-to-br ${tierConfig.cardBg} p-8 shadow-lg`} dir="rtl">
+            {/* Plan header row */}
+            <div className="flex items-start justify-between mb-4">
+              <div className="text-right">
+                <div className={`text-2xl font-black ${tierConfig.textMain}`}>{tierConfig.label}</div>
+                <div className={`text-sm font-semibold ${tierConfig.textMuted} mt-0.5`}>{tierConfig.quota}</div>
               </div>
-              {userData?.subscriptionStatus && (
-                <div className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-lg">
-                  {getStatusIcon(userData.subscriptionStatus)}
-                  <span className="font-bold">{getStatusText(userData.subscriptionStatus)}</span>
-                </div>
-              )}
+              <div className={`flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br ${tierConfig.color} shadow`}>
+                <span className="text-white">{tierConfig.icon}</span>
+              </div>
             </div>
+
+            {/* Price */}
+            <div className={`flex items-baseline gap-1 mb-5`}>
+              <span className={`text-4xl font-black ${tierConfig.textMain}`}>{tierConfig.price}</span>
+              <span className={`text-sm ${tierConfig.textMuted}`}>{tierConfig.period}</span>
+            </div>
+
+            {/* Features */}
+            <ul className="space-y-2.5 mb-6" dir="rtl">
+              <li className={`flex items-center gap-2 font-bold ${tierConfig.textMain}`}>
+                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                <span>{tierConfig.quota}</span>
+              </li>
+              {tierConfig.features.map((f: string, i: number) => (
+                <li key={i} className={`flex items-center gap-2 ${tierConfig.textSub}`}>
+                  <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                  <span>{f}</span>
+                </li>
+              ))}
+            </ul>
 
             {/* Usage Tracker */}
-            <div className="mt-4 bg-white/20 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-bold">{isFreeTier ? 'שימוש חינמי כולל' : 'שימוש יומי'}</span>
-                <span className="text-sm font-bold">{currentUsageCount} / {usageLimit}</span>
+            {!isFriendsTier && (
+              <div className="bg-white/60 rounded-2xl p-4 mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className={`text-sm font-bold ${tierConfig.textMain}`}>
+                    {isFreeTier ? 'שימוש חינמי כולל' : 'שימוש שבועי'}
+                  </span>
+                  <span className={`text-sm font-bold ${tierConfig.textMain}`}>{currentUsageCount} / {usageLimit}</span>
+                </div>
+                <div className="w-full rounded-full h-3 overflow-hidden bg-white/50">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r ${tierConfig.color} transition-all duration-500`}
+                    style={{ width: `${Math.min(100, (currentUsageCount / Math.max(usageLimit, 1)) * 100)}%` }}
+                  />
+                </div>
+                <div className={`mt-2 text-xs ${tierConfig.textMuted}`}>
+                  {isFreeTier
+                    ? (remainingUsage > 0
+                        ? `נותרו ${remainingUsage} ניתוחים חינמיים`
+                        : 'הניתוחים החינמיים שלך הסתיימו.')
+                    : `נותרו ${remainingUsage} ניתוחים להיום`}
+                </div>
               </div>
-              <div className="w-full bg-white/20 rounded-full h-3 overflow-hidden">
-                <div 
-                  className="bg-white h-full rounded-full transition-all duration-500"
-                  style={{ 
-                    width: `${Math.min(100, (currentUsageCount / Math.max(usageLimit, 1)) * 100)}%` 
-                  }}
-                ></div>
+            )}
+
+            {userData?.subscriptionStatus && (
+              <div className={`flex items-center gap-2 ${tierConfig.textMuted} text-sm`}>
+                {getStatusIcon(userData.subscriptionStatus)}
+                <span>סטטוס מנוי: <strong>{getStatusText(userData.subscriptionStatus)}</strong></span>
               </div>
-              <div className="mt-2 text-xs opacity-80">
-                {isFreeTier
-                  ? (remainingUsage > 0
-                      ? `נותרו ${remainingUsage} ניתוחים חינמיים בסך הכול`
-                      : 'הניתוחים החינמיים שלך הסתיימו. כדי להמשיך לקבל ניתוחים נוספים צריך מנוי.')
-                  : `נותרו ${remainingUsage} ניתוחים היום`}
-              </div>
-            </div>
+            )}
 
             {userData?.nextBillingDate && userData.subscriptionStatus === 'ACTIVE' && (
-              <div className="flex items-center gap-2 text-sm opacity-90">
+              <div className={`flex items-center gap-2 text-sm mt-2 ${tierConfig.textMuted}`}>
                 <Calendar className="w-4 h-4" />
                 <span>חיוב הבא: {new Date(userData.nextBillingDate).toLocaleDateString('he-IL')}</span>
               </div>
