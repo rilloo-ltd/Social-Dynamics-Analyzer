@@ -679,6 +679,7 @@ export default function HomePage() {
   };
 
   const beginAskTheAuntFlow = (mode: 'person' | 'general') => {
+    if (!requireAuth()) return;
     if (hasExhaustedFreeAnalyses) {
       setShowUpgradeModal(true);
       return;
@@ -881,6 +882,12 @@ export default function HomePage() {
 
   const handleOpenPromoCodeModal = () => {
     setShowPromoCodeModal(true);
+  };
+
+  const handleLogOut = async () => {
+    clearLoadedChat();
+    await logOut();
+    router.push('/');
   };
 
   const refreshUserTier = async () => {
@@ -1335,8 +1342,17 @@ export default function HomePage() {
     finally { setLoading(false); }
   };
 
+  const requireAuth = (): boolean => {
+    if (!hasVisibleAuthSession) {
+      router.push('/login');
+      return false;
+    }
+    return true;
+  };
+
   const triggerAnalysis = (type: AnalysisType, participants?: string[], bypassCache: boolean = false) => {
     if (!chatData) return;
+    if (!requireAuth()) return;
 
     if (hasExhaustedFreeAnalyses) {
       setShowUpgradeModal(true);
@@ -1474,21 +1490,83 @@ export default function HomePage() {
 
   if (isProcessingFile) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
-        <div className="flex flex-col items-center space-y-8 max-w-sm w-full animate-fadeIn">
-          <div className="relative">
-            <div className="absolute inset-0 bg-blue-200 rounded-full animate-ping opacity-75 scale-150"></div>
-            <div className="relative bg-white p-8 rounded-full shadow-2xl border-4 border-blue-50 transform hover:rotate-12 transition-transform duration-700">
-               <BrainIcon className="w-16 h-16 text-blue-600 animate-pulse" />
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        {/* ── App Header ── */}
+        <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between px-4 sm:px-6 h-14">
+            {/* Left: logo + name + badge */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
+                <img src={LOGO_URL} className="w-8 h-8 rounded-full ring-2 ring-teal-100" />
+                <span className="font-black text-slate-800 text-base hidden sm:block">הדודה</span>
+              </div>
+              {hasVisibleAuthSession && isAdmin && (
+                <button type="button" onClick={() => router.push('/admin')}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-slate-700 to-slate-900 px-3 py-1 text-xs font-bold text-white shadow hover:scale-105 transition-all cursor-pointer"
+                  title="לוח ניהול">
+                  <Shield className="w-3.5 h-3.5" /><span>Admin</span>
+                </button>
+              )}
+              {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
+                const isFriendsTier = selectedTier === 'friends';
+                const isSuperTier = selectedTier === 'super';
+                const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
+                const bg = isFriendsTier ? 'from-emerald-500 to-teal-500' : isSuperTier ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-violet-600';
+                const label = isFriendsTier ? 'חברים' : isSuperTier ? 'סופר' : 'בסיסי';
+                return (
+                  <span className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${bg} px-2.5 py-1 text-xs font-bold text-white shadow`}>
+                    <Icon className="w-3 h-3" />{label}
+                  </span>
+                );
+              })()}
+            </div>
+            {/* Right: actions */}
+            <div className="flex items-center gap-2">
+              {!hasVisibleAuthSession ? (
+                <Link href="/login" className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-xl text-xs font-bold shadow transition-all">
+                  <LogIn className="w-3.5 h-3.5" /><span>התחברות</span>
+                </Link>
+              ) : (
+                <>
+                  <div className="hidden sm:flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-1.5 shadow-sm">
+                    <UserCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="text-xs text-slate-600 max-w-[130px] truncate">{visibleEmail}</span>
+                  </div>
+                  <button onClick={handleOpenPromoCodeModal} type="button" title="קוד חברים"
+                    className="p-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-white rounded-xl shadow cursor-pointer transition-all">
+                    <Gift className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => router.push('/profile')} title="הפרופיל שלי"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow cursor-pointer transition-all">
+                    <User className="w-3.5 h-3.5" /><span className="hidden sm:inline">הפרופיל שלי</span>
+                  </button>
+                  <button onClick={handleLogOut} title="התנתקות"
+                    className="p-2 bg-slate-50 border border-slate-100 hover:bg-red-50 hover:border-red-200 text-slate-400 hover:text-red-500 rounded-xl shadow-sm cursor-pointer transition-all">
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
             </div>
           </div>
-          <div className="text-center space-y-3">
-            <h2 className="text-3xl font-black text-slate-800 min-h-[40px]" dir="rtl">
-              {displayedMessage || "מנתח את הצ'אט..."}
-              <span className="animate-pulse">_</span>
-            </h2>
-            <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden shadow-inner">
-             <div className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 transition-all duration-300" style={{ width: `${processingProgress}%` }}></div>
+        </header>
+
+        {/* Processing content */}
+        <div className="flex-1 flex flex-col items-center justify-center p-6">
+          <div className="flex flex-col items-center space-y-8 max-w-sm w-full animate-fadeIn">
+            <div className="relative">
+              <div className="absolute inset-0 bg-blue-200 rounded-full animate-ping opacity-75 scale-150"></div>
+              <div className="relative bg-white p-8 rounded-full shadow-2xl border-4 border-blue-50 transform hover:rotate-12 transition-transform duration-700">
+                 <BrainIcon className="w-16 h-16 text-blue-600 animate-pulse" />
+              </div>
+            </div>
+            <div className="text-center space-y-3 w-full">
+              <h2 className="text-3xl font-black text-slate-800 min-h-[40px]" dir="rtl">
+                {displayedMessage || "מנתח את הצ'אט..."}
+                <span className="animate-pulse">_</span>
+              </h2>
+              <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+                <div className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 transition-all duration-300" style={{ width: `${processingProgress}%` }}></div>
+              </div>
             </div>
           </div>
         </div>
@@ -1516,89 +1594,67 @@ export default function HomePage() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-100 overflow-x-hidden relative">
 
-        {/* Unified Top Nav Bar */}
-        <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-5 py-3">
-          {/* Left: Tier badge / Admin button */}
-          <div className="flex items-center gap-2">
-            {hasVisibleAuthSession && isAdmin && (
-              <button
-                type="button"
-                onClick={() => router.push('/admin')}
-                className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-slate-700 to-slate-900 px-3 py-1.5 text-xs font-bold text-white shadow-lg hover:from-slate-800 hover:to-black hover:scale-105 transition-all cursor-pointer"
-                title="Admin Dashboard"
-              >
-                <Shield className="w-3.5 h-3.5" />
-                <span>Admin</span>
-              </button>
-            )}
-            {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
-              const isFriendsTier = selectedTier === 'friends';
-              const isSuperTier = selectedTier === 'super';
-              const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
-              const badgeClasses = isFriendsTier
-                ? 'from-emerald-500 to-teal-500 shadow-emerald-500/30'
-                : isSuperTier
-                  ? 'from-amber-500 to-orange-500 shadow-amber-500/30'
-                  : 'from-indigo-600 to-violet-600 shadow-indigo-500/30';
-              const label = isFriendsTier ? 'Friends User' : isSuperTier ? 'Super User' : 'Basic User';
-              return (
-                <div className={`inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r px-3 py-1.5 text-xs font-bold text-white shadow-lg ${badgeClasses}`}>
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{label}</span>
-                </div>
-              );
-            })()}
-          </div>
-
-          {/* Right: User actions */}
-          <div className="flex items-center gap-2">
-          {!hasVisibleAuthSession ? (
-            <Link
-              href="/login"
-              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-xl transition-all shadow-md hover:shadow-lg hover:scale-105 font-bold text-xs"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>התחברות</span>
-            </Link>
-          ) : (
-            <>
-              {/* Email pill */}
-              <div className="hidden sm:flex items-center gap-2 bg-white/80 backdrop-blur-md rounded-xl px-3 py-1.5 border border-white/30 shadow-sm">
-                <UserCircle2 className="w-4 h-4 text-indigo-500 shrink-0" />
-                <span className="text-xs font-medium text-slate-700 max-w-[140px] truncate">{visibleEmail}</span>
+        {/* ── App Header ── */}
+        <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between px-4 sm:px-6 h-14">
+            {/* Left: logo + name + badge */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
+                <img src={LOGO_URL} className="w-8 h-8 rounded-full ring-2 ring-teal-100" />
+                <span className="font-black text-slate-800 text-base hidden sm:block">הדודה</span>
               </div>
-              {/* Promo code */}
-              <button
-                onClick={handleOpenPromoCodeModal}
-                type="button"
-                className="p-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg"
-                title="קוד חברים"
-              >
-                <Gift className="w-4 h-4" />
-              </button>
-              {/* Profile */}
-              <button
-                onClick={() => router.push('/profile')}
-                className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl transition-all cursor-pointer shadow-md hover:shadow-lg hover:scale-105 font-bold text-xs"
-              >
-                <User className="w-3.5 h-3.5" />
-                <span>הפרופיל שלי</span>
-              </button>
-              {/* Sign out */}
-              <button
-                onClick={logOut}
-                className="p-2 bg-white/80 backdrop-blur-md hover:bg-red-50 text-slate-500 hover:text-red-600 rounded-xl transition-all cursor-pointer shadow-sm hover:shadow-md border border-white/30"
-                title="Sign Out"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </>
-          )}
+              {hasVisibleAuthSession && isAdmin && (
+                <button type="button" onClick={() => router.push('/admin')}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-slate-700 to-slate-900 px-3 py-1 text-xs font-bold text-white shadow hover:scale-105 transition-all cursor-pointer"
+                  title="לוח ניהול">
+                  <Shield className="w-3.5 h-3.5" /><span>Admin</span>
+                </button>
+              )}
+              {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
+                const isFriendsTier = selectedTier === 'friends';
+                const isSuperTier = selectedTier === 'super';
+                const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
+                const bg = isFriendsTier ? 'from-emerald-500 to-teal-500' : isSuperTier ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-violet-600';
+                const label = isFriendsTier ? 'חברים' : isSuperTier ? 'סופר' : 'בסיסי';
+                return (
+                  <span className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${bg} px-2.5 py-1 text-xs font-bold text-white shadow`}>
+                    <Icon className="w-3 h-3" />{label}
+                  </span>
+                );
+              })()}
+            </div>
+            {/* Right: actions */}
+            <div className="flex items-center gap-2">
+              {!hasVisibleAuthSession ? (
+                <Link href="/login" className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-xl text-xs font-bold shadow transition-all">
+                  <LogIn className="w-3.5 h-3.5" /><span>התחברות</span>
+                </Link>
+              ) : (
+                <>
+                  <div className="hidden sm:flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-1.5 shadow-sm">
+                    <UserCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="text-xs text-slate-600 max-w-[130px] truncate">{visibleEmail}</span>
+                  </div>
+                  <button onClick={handleOpenPromoCodeModal} type="button" title="קוד חברים"
+                    className="p-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-white rounded-xl shadow cursor-pointer transition-all">
+                    <Gift className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => router.push('/profile')} title="הפרופיל שלי"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow cursor-pointer transition-all">
+                    <User className="w-3.5 h-3.5" /><span className="hidden sm:inline">הפרופיל שלי</span>
+                  </button>
+                  <button onClick={handleLogOut} title="התנתקות"
+                    className="p-2 bg-slate-50 border border-slate-100 hover:bg-red-50 hover:border-red-200 text-slate-400 hover:text-red-500 rounded-xl shadow-sm cursor-pointer transition-all">
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
-        </div>
+        </header>
 
         {/* Hero Section */}
-        <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-24 sm:pt-20 text-center text-slate-800">
+        <div className="bg-gradient-to-br from-teal-50 via-sky-50 to-indigo-50 relative overflow-hidden pb-24 pt-12 text-center text-slate-800">
            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.03]"></div>
            <div className="absolute -bottom-1 left-0 right-0 h-24 bg-gradient-to-t from-slate-50 to-transparent"></div>
            
@@ -1999,7 +2055,7 @@ export default function HomePage() {
               יצירה משותפת
             </p>
             <p className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">
-              הדודה היא יצירה משותפת של Riloo וד"ר רועי צזנה
+              הדודה היא יצירה משותפת של Rilloo וד"ר רועי צזנה
             </p>
           </div>
         </div>
@@ -2083,54 +2139,79 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
-      <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
-         <div className="flex items-center gap-3">
-           <div 
-             onClick={() => hasVisibleAuthSession && router.push('/profile')}
-             className={`flex items-center gap-3 ${hasVisibleAuthSession ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-             title={hasVisibleAuthSession ? 'הפרופיל שלי' : ''}
-           >
-             <img src={LOGO_URL} className="w-10 h-10 rounded-full" />
-             <h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1>
-           </div>
-           {hasVisibleAuthSession && (() => {
-             if (selectedTier === 'free') return null;
-             const isFriendsTier = selectedTier === 'friends';
-             const isSuperTier = selectedTier === 'super';
-             const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
-             const badgeClasses = isFriendsTier
-               ? 'from-emerald-500 to-teal-500'
-               : isSuperTier
-                 ? 'from-amber-500 to-orange-500'
-                 : 'from-indigo-600 to-violet-600';
-             const label = isFriendsTier ? 'Friends User' : isSuperTier ? 'Super User' : 'Basic User';
-             return (
-               <div className={`inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r px-3 py-1.5 text-xs font-bold text-white shadow-md ${badgeClasses}`}>
-                 <Icon className="w-3.5 h-3.5" />
-                 <span>{label}</span>
-               </div>
-             );
-           })()}
-         </div>
-         <div className="flex items-center gap-3">
-            {hasVisibleAuthSession && (
+      {/* ── App Header ── */}
+      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
+        <div className="flex items-center justify-between px-4 sm:px-6 h-14">
+          {/* Left: logo + name + badge */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5">
+              <img src={LOGO_URL} className="w-8 h-8 rounded-full ring-2 ring-teal-100" />
+              <span className="font-black text-slate-800 text-base hidden sm:block">הדודה</span>
+            </div>
+            {hasVisibleAuthSession && isAdmin && (
+              <button type="button" onClick={() => router.push('/admin')}
+                className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-slate-700 to-slate-900 px-3 py-1 text-xs font-bold text-white shadow hover:scale-105 transition-all cursor-pointer"
+                title="לוח ניהול">
+                <Shield className="w-3.5 h-3.5" /><span>Admin</span>
+              </button>
+            )}
+            {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
+              const isFriendsTier = selectedTier === 'friends';
+              const isSuperTier = selectedTier === 'super';
+              const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
+              const bg = isFriendsTier ? 'from-emerald-500 to-teal-500' : isSuperTier ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-violet-600';
+              const label = isFriendsTier ? 'חברים' : isSuperTier ? 'סופר' : 'בסיסי';
+              return (
+                <span className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${bg} px-2.5 py-1 text-xs font-bold text-white shadow`}>
+                  <Icon className="w-3 h-3" />{label}
+                </span>
+              );
+            })()}
+          </div>
+          {/* Right: actions */}
+          <div className="flex items-center gap-2">
+            {/* Swap chat button — always visible on reports page */}
+            <button
+              onClick={() => setChatData(null)}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:border-red-300 hover:bg-red-50 text-slate-500 hover:text-red-600 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+              title="החלף צ'אט"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>החלף צ'אט</span>
+            </button>
+            {!hasVisibleAuthSession ? (
+              <Link href="/login" className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-xl text-xs font-bold shadow transition-all">
+                <LogIn className="w-3.5 h-3.5" /><span>התחברות</span>
+              </Link>
+            ) : (
               <>
-                <button
-                  onClick={() => router.push('/profile')}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all cursor-pointer"
-                >
-                  <User className="w-4 h-4" />
-                  <span className="hidden md:inline">פרופיל</span>
+                <div className="hidden sm:flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-1.5 shadow-sm">
+                  <UserCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                  <span className="text-xs text-slate-600 max-w-[130px] truncate">{visibleEmail}</span>
+                </div>
+                <button onClick={handleOpenPromoCodeModal} type="button" title="קוד חברים"
+                  className="p-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-white rounded-xl shadow cursor-pointer transition-all">
+                  <Gift className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => router.push('/profile')} title="הפרופיל שלי"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow cursor-pointer transition-all">
+                  <User className="w-3.5 h-3.5" /><span className="hidden sm:inline">הפרופיל שלי</span>
+                </button>
+                <button onClick={handleLogOut} title="התנתקות"
+                  className="p-2 bg-slate-50 border border-slate-100 hover:bg-red-50 hover:border-red-200 text-slate-400 hover:text-red-500 rounded-xl shadow-sm cursor-pointer transition-all">
+                  <LogOut className="w-3.5 h-3.5" />
                 </button>
               </>
             )}
-            <button onClick={() => setChatData(null)} className="text-sm font-medium text-slate-500 hover:text-red-600 transition-colors cursor-pointer">החלף צ'אט</button>
-         </div>
-      </div>
+          </div>
+        </div>
+      </header>
 
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="mb-12 text-center">
-           <button onClick={() => { setIsGroupSelectorOpen(true); logButton('GROUP_ANALYSIS_INIT'); }} className="group relative w-full max-w-4xl block mx-auto bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer">
+           <button onClick={() => { if (!requireAuth()) return; setIsGroupSelectorOpen(true); logButton('GROUP_ANALYSIS_INIT'); }} className="group relative w-full max-w-4xl block mx-auto bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl p-6 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer">
               <div className="relative z-10 flex items-center justify-between text-white">
                  <div className="flex items-center gap-4">
                     <div className="bg-white/20 p-3 rounded-xl"><GroupIcon className="w-8 h-8" /></div>

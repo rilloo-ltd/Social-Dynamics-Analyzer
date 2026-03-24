@@ -777,7 +777,7 @@ ${participantAxisInstruction}
     
     // Fallback: return empty structure
     return {
-      personality: "×ž×¦×˜×¢×¨×™×, ×”×ª×¨×—×©×” ×©×’×™××” ×‘× ×™×ª×•×—. ×× × × ×¡×• ×©×•×‘.",
+      personality: "מצטערים, התרחשה שגיאה בניתוח. אנא נסו שוב.",
       othersThoughts: "",
       improvement: "",
       hiddenThoughts: "",
@@ -859,10 +859,6 @@ ${chatContext}
 </chat_history>
 
 ${finalPromptWithFormatRules}
-
-×”×—×–×™×¨×• ××ª ×›×œ ×”×ª×©×•×‘×” ×›-JSON ×™×—×™×“ ×¢× ×©× ×™ ×©×“×•×ª:
-- analysisText: ×›×œ ×”×˜×§×¡×˜ ×”×ž×œ× ×©×œ ×”× ×™×ª×•×— ×”×§×‘×•×¦×ª×™, ×‘×“×™×•×§ ×‘×¤×•×¨×ž×˜ ×©×”×ª×‘×§×©×ª× ×›×‘×¨ ×œ×”×—×–×™×¨.
-- participantAxisScores: ×ž×¢×¨×š ×¦×™×•× ×™ ×”×ž×©×ª×ª×¤×™×.
 
 ${participantAxisInstruction}
 `;
