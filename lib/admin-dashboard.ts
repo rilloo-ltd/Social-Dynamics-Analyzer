@@ -1358,6 +1358,14 @@ export async function generateAdminReferralCode(userId: string, userName: string
   return generatedCode;
 }
 
+export async function generateAdminCreditCode(credits: number = 2) {
+  const suffix = Math.random().toString(36).slice(2, 9).toUpperCase();
+  const generatedCode = `CREDIT-${suffix}`;
+  const { createCreditCode } = await import('@/lib/firestore-admin');
+  await createCreditCode(generatedCode, credits);
+  return generatedCode;
+}
+
 export async function reconcileAdminSubscription(userId: string) {
   const db = getAdminDb();
   const userRef = db.collection('users').doc(userId);

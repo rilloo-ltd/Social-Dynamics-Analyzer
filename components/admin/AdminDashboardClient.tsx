@@ -156,6 +156,9 @@ export default function AdminDashboardClient() {
   const [generatedFriendsCode, setGeneratedFriendsCode] = useState<string | null>(null);
   const [friendsCodeCopied, setFriendsCodeCopied] = useState(false);
   const [generatingFriendsCode, setGeneratingFriendsCode] = useState(false);
+  const [generatedCreditCode, setGeneratedCreditCode] = useState<string | null>(null);
+  const [creditCodeCopied, setCreditCodeCopied] = useState(false);
+  const [generatingCreditCode, setGeneratingCreditCode] = useState(false);
 
   const callAdminApi = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const headers = await getAuthHeaders();
@@ -250,6 +253,28 @@ export default function AdminDashboardClient() {
     setFriendsCodeCopied(true);
     setTimeout(() => setFriendsCodeCopied(false), 2000);
   }, [generatedFriendsCode]);
+
+  const generateCreditCode = useCallback(async () => {
+    setGeneratingCreditCode(true);
+    setGeneratedCreditCode(null);
+    setCreditCodeCopied(false);
+    try {
+      const result = await callAdminApi<{ code: string }>('/api/admin/actions/generate-credit-code', {
+        method: 'POST',
+        body: JSON.stringify({ credits: 2 }),
+      });
+      setGeneratedCreditCode(result.code);
+    } finally {
+      setGeneratingCreditCode(false);
+    }
+  }, [callAdminApi]);
+
+  const copyCreditCode = useCallback(() => {
+    if (!generatedCreditCode) return;
+    navigator.clipboard.writeText(generatedCreditCode);
+    setCreditCodeCopied(true);
+    setTimeout(() => setCreditCodeCopied(false), 2000);
+  }, [generatedCreditCode]);
 
   const runAdminAction = useCallback(async (key: string, path: string, body: Record<string, unknown>, onDone?: () => Promise<void>) => {
     setBusyAction(key);
@@ -561,6 +586,42 @@ export default function AdminDashboardClient() {
                     className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
                   >
                     {generatingFriendsCode ? 'Generating…' : generatedFriendsCode ? 'Generate another' : 'Generate code'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Generate one-time +2 Credits code */}
+            <div className="rounded-2xl border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
+                    <Sparkles className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-blue-900">Generate +2 Credits code</div>
+                    <div className="text-sm text-blue-700">One-time use · +2 lifetime upload credits</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {generatedCreditCode && (
+                    <div className="flex items-center gap-2 rounded-xl border-2 border-blue-300 bg-white px-4 py-2">
+                      <span className="font-mono text-base font-bold tracking-widest text-blue-800">{generatedCreditCode}</span>
+                      <button
+                        onClick={copyCreditCode}
+                        className="ml-1 flex items-center gap-1 rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-200"
+                      >
+                        {creditCodeCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        {creditCodeCopied ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    onClick={generateCreditCode}
+                    disabled={generatingCreditCode}
+                    className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+                  >
+                    {generatingCreditCode ? 'Generating…' : generatedCreditCode ? 'Generate another' : 'Generate code'}
                   </button>
                 </div>
               </div>

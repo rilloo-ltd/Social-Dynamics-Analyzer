@@ -767,9 +767,11 @@ export async function getUserTier(userId: string): Promise<{
       }, { merge: true });
     }
 
+    const bonusUploads = Number.isFinite(data?.bonusUploads) ? Math.max(0, Number(data.bonusUploads)) : 0;
+
     return {
       tier,
-      maxDailyUploads: resolvedMaxDailyUploads
+      maxDailyUploads: resolvedMaxDailyUploads + bonusUploads
     };
   } catch (error) {
     logger.error('Error getting user tier', { userId }, error instanceof Error ? error : undefined);
@@ -1146,6 +1148,26 @@ export async function createGlobalReferralCode(userId: string, userName: string,
   });
   
   return code;
+}
+
+export async function createCreditCode(code: string, credits: number = 2) {
+  const db = getAdminDb();
+  await db.collection('creditCodes').doc(code).set({
+    code,
+    credits,
+    usesRemaining: 1,
+    usedBy: [],
+    createdAt: new Date().toISOString(),
+  });
+  return code;
+}
+
+export async function addBonusUploadsToUser(userId: string, credits: number) {
+  const db = getAdminDb();
+  const userRef = db.collection('users').doc(userId);
+  const userDoc = await userRef.get();
+  const current = Number.isFinite(userDoc.data()?.bonusUploads) ? Math.max(0, Number(userDoc.data()?.bonusUploads)) : 0;
+  await userRef.set({ bonusUploads: current + credits }, { merge: true });
 }
 
 // ============ ADMIN OPERATIONS ============
