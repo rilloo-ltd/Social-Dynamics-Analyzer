@@ -17,13 +17,15 @@ import {
   AlertCircle,
   LogOut,
   Zap,
-  Crown
+  Crown,
+  Gift,
+  Clock
 } from 'lucide-react';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
 
 interface UserData {
-  tier: 'free' | 'basic' | 'super';
+  tier: 'free' | 'basic' | 'super' | 'friends';
   maxDailyUploads: number;
   subscriptionId?: string;
   subscriptionStatus?: string;
@@ -32,6 +34,7 @@ interface UserData {
   subscriptionStartDate?: string;
   uploadsToday?: number;
   totalUploadsUsed?: number;
+  tierExpiresAt?: string;
 }
 
 interface Transaction {
@@ -204,6 +207,12 @@ export default function ProfilePage() {
           color: 'from-purple-500 to-pink-600',
           icon: <CreditCard className="w-6 h-6" />
         };
+      case 'friends':
+        return {
+          label: 'גישת חברים',
+          color: 'from-emerald-500 to-teal-600',
+          icon: <Gift className="w-6 h-6" />
+        };
       default:
         return {
           label: 'חינם',
@@ -244,9 +253,14 @@ export default function ProfilePage() {
 
   const tierConfig = getTierConfig(userData?.tier || 'free');
   const isFreeTier = userData?.tier === 'free';
+  const isFriendsTier = userData?.tier === 'friends';
   const currentUsageCount = isFreeTier ? (userData?.totalUploadsUsed || 0) : (userData?.uploadsToday || 0);
   const usageLimit = userData?.maxDailyUploads || 0;
   const remainingUsage = Math.max(0, usageLimit - currentUsageCount);
+
+  const friendsDaysLeft = isFriendsTier && userData?.tierExpiresAt
+    ? Math.max(0, Math.ceil((new Date(userData.tierExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 relative overflow-hidden">
@@ -303,6 +317,45 @@ export default function ProfilePage() {
               )}
             </div>
           </div>
+
+          {/* Friends tier tracking card */}
+          {isFriendsTier && userData?.tierExpiresAt && (
+            <div className="mb-8 p-6 bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-2xl" dir="rtl">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-emerald-100">
+                  <Gift className="w-6 h-6 text-emerald-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-emerald-900 mb-1">גישת חברים פעילה 🎉</h3>
+                  <p className="text-sm text-emerald-700 mb-4">קיבלת גישה בלתי מוגבלת באמצעות קוד הזמנה</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-white border border-emerald-200 p-3 text-center">
+                      <div className="flex items-center justify-center gap-1 text-emerald-600 mb-1">
+                        <Clock className="w-4 h-4" />
+                      </div>
+                      <div className="text-2xl font-black text-emerald-800">{friendsDaysLeft}</div>
+                      <div className="text-xs text-emerald-600 font-medium">ימים נותרו</div>
+                    </div>
+                    <div className="rounded-xl bg-white border border-emerald-200 p-3 text-center">
+                      <div className="flex items-center justify-center gap-1 text-emerald-600 mb-1">
+                        <Calendar className="w-4 h-4" />
+                      </div>
+                      <div className="text-sm font-bold text-emerald-800 pt-1">
+                        {new Date(userData.tierExpiresAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' })}
+                      </div>
+                      <div className="text-xs text-emerald-600 font-medium">תאריך תפוגה</div>
+                    </div>
+                  </div>
+                  {friendsDaysLeft !== null && friendsDaysLeft <= 2 && (
+                    <div className="mt-3 flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      <span>הגישה שלך עומדת לפוג בקרוב. שקול לשדרג למנוי קבוע.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Subscription Status */}
           <div className={`mb-8 p-6 bg-gradient-to-r ${tierConfig.color} rounded-2xl text-white`} dir="rtl">

@@ -304,6 +304,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   const [feedbackRating, setFeedbackRating] = useState<number | null>(null);
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const displayContent = normalizeGeneratedText(content?.replace(/^\[PRIVACY_NOTICE\].*\n\n/, "") || "");
   const privacyNoticeText = content?.match(/^\[PRIVACY_NOTICE\] (.*)\n\n/)?.[1] || "";
@@ -435,6 +436,81 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
     } finally {
       setCopyingVisuals(false);
     }
+  };
+
+  const handleDownloadPDF = () => {
+    const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
+
+    const simpleMarkdownToHtml = (md: string): string => {
+      const lines = md.split('\n');
+      let html = '';
+      let inList = false;
+      const fmt = (t: string) =>
+        t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t) { if (inList) { html += '</ul>'; inList = false; } html += '<br>'; continue; }
+        if (t.startsWith('### ')) { if (inList) { html += '</ul>'; inList = false; } html += `<h3>${fmt(t.slice(4))}</h3>`; }
+        else if (t.startsWith('## ')) { if (inList) { html += '</ul>'; inList = false; } html += `<h2>${fmt(t.slice(3))}</h2>`; }
+        else if (t.startsWith('# ')) { if (inList) { html += '</ul>'; inList = false; } html += `<h1>${fmt(t.slice(2))}</h1>`; }
+        else if (t.startsWith('* ') || t.startsWith('- ') || t.startsWith('\u2022 ')) {
+          if (!inList) { html += '<ul>'; inList = true; }
+          html += `<li>${fmt(t.replace(/^[*\-\u2022]\s+/, ''))}</li>`;
+        } else { if (inList) { html += '</ul>'; inList = false; } html += `<p>${fmt(t)}</p>`; }
+      }
+      if (inList) html += '</ul>';
+      return html;
+    };
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    printWindow.document.write(`<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="UTF-8">
+<title>${title}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;700;900&display=swap');
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Heebo', Arial, sans-serif; max-width: 820px; margin: 0 auto; padding: 48px 40px; color: #1e293b; direction: rtl; line-height: 1.75; }
+.header { display: flex; align-items: center; gap: 20px; margin-bottom: 40px; padding-bottom: 28px; border-bottom: 3px solid #e2e8f0; }
+.logo { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.header-text h1 { font-size: 26px; font-weight: 900; color: #1e293b; margin-bottom: 4px; }
+.header-text p { font-size: 13px; color: #64748b; }
+.badge { display: inline-block; background: linear-gradient(135deg,#6366f1,#8b5cf6); color: #fff; padding: 3px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; margin-top: 6px; }
+h1,h2,h3 { color: #1e293b; }
+h2 { font-size: 20px; font-weight: 900; margin-top: 36px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #e2e8f0; }
+h3 { font-size: 17px; font-weight: 700; margin-top: 24px; margin-bottom: 8px; }
+p { margin-bottom: 14px; font-size: 15px; color: #334155; }
+ul { margin: 10px 0 16px 0; padding-right: 22px; }
+li { margin-bottom: 8px; font-size: 15px; color: #334155; }
+strong { font-weight: 700; color: #1e293b; }
+.footer { margin-top: 56px; padding-top: 24px; border-top: 2px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 13px; }
+.footer a { color: #6366f1; font-weight: 700; text-decoration: none; }
+.date { font-size: 11px; color: #cbd5e1; margin-top: 10px; }
+@media print { body { padding: 20px; } @page { margin: 15mm; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <img src="${LOGO_URL}" class="logo" alt="\u05d4\u05d3\u05d5\u05d3\u05d4" />
+  <div class="header-text">
+    <h1>${title}</h1>
+    <p>\u05e0\u05d9\u05ea\u05d5\u05d7 \u05de\u05d1\u05d5\u05e1\u05e1 \u05d1\u05d9\u05e0\u05d4 \u05de\u05dc\u05d0\u05db\u05d5\u05ea\u05d9\u05ea</p>
+    <span class="badge">\u05d4\u05d3\u05d5\u05d3\u05d4 AI</span>
+  </div>
+</div>
+<div class="content">${simpleMarkdownToHtml(displayContent)}</div>
+<div class="footer">
+  <p>\u05d4\u05e0\u05d9\u05ea\u05d5\u05d7 \u05d1\u05d5\u05e6\u05e2 \u05d1\u05d0\u05de\u05e6\u05e2\u05d5\u05ea <strong>\u05d4\u05d3\u05d5\u05d3\u05d4</strong> \u2013 \u05e0\u05d9\u05ea\u05d5\u05d7 \u05e6'\u05d0\u05d8\u05d9\u05dd \u05de\u05d1\u05d5\u05e1\u05e1 \u05d1\u05d9\u05e0\u05d4 \u05de\u05dc\u05d0\u05db\u05d5\u05ea\u05d9\u05ea</p>
+  <a href="${siteUrl}" target="_blank">${siteUrl}</a>
+  <p class="date">\u05e0\u05d5\u05e6\u05e8 \u05d1\u05ea\u05d0\u05e8\u05d9\u05da: ${new Date().toLocaleDateString('he-IL')}</p>
+</div>
+</body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => { printWindow.print(); }, 600);
   };
 
   const handleVersionSelect = async (version: 'original' | 'abbreviated' | 'cartoon_image') => {
@@ -718,7 +794,14 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                   </div>
                 )}
 
-                <div className="mt-8 flex justify-center">
+                <div className="mt-8 flex flex-wrap justify-center gap-3">
+                   <button
+                     onClick={handleDownloadPDF}
+                     className="px-8 py-4 rounded-full font-bold bg-white border-2 border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all shadow-md cursor-pointer flex items-center gap-2"
+                   >
+                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h4a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+                     <span>הורד PDF</span>
+                   </button>
                    <button onClick={() => setShareHubState('version')} className="px-12 py-4 rounded-full font-bold bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-xl cursor-pointer">שתף תוצאות</button>
                 </div>
              </div>
@@ -822,6 +905,29 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                      </button>
                   </div>
                   
+                  {/* Clickable site link */}
+                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <a
+                      href={typeof window !== 'undefined' ? window.location.origin : '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 truncate text-sm font-medium text-indigo-600 hover:underline"
+                      dir="ltr"
+                    >
+                      {typeof window !== 'undefined' ? window.location.origin : ''}
+                    </a>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(window.location.origin);
+                        setCopiedLink(true);
+                        setTimeout(() => setCopiedLink(false), 2000);
+                      }}
+                      className="shrink-0 rounded-lg bg-slate-200 hover:bg-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 transition cursor-pointer"
+                    >
+                      {copiedLink ? '✓ הועתק' : 'העתק קישור'}
+                    </button>
+                  </div>
+
                   <div className="p-4 bg-slate-50 border rounded-xl text-xs text-slate-500 leading-relaxed text-right">
                     💡 <b>טיפ:</b> בוואטסאפ וטלגרם הטקסט המלא יועתק אוטומטית. בפייסבוק ולינקדאין ייתכן שתצטרכו להדביק את הטקסט ידנית (השתמשו בכפתור ההעתקה למעלה).
                   </div>

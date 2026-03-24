@@ -1475,7 +1475,6 @@ export default function HomePage() {
   if (isProcessingFile) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative">
-        {hasVisibleAuthSession && renderPaidTierBadge('top-16 left-4')}
         <div className="flex flex-col items-center space-y-8 max-w-sm w-full animate-fadeIn">
           <div className="relative">
             <div className="absolute inset-0 bg-blue-200 rounded-full animate-ping opacity-75 scale-150"></div>
@@ -2084,15 +2083,34 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans" dir="rtl">
-      {hasVisibleAuthSession && renderPaidTierBadge('top-20 left-4')}
       <div className="bg-white shadow-sm border-b sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
-         <div 
-           onClick={() => hasVisibleAuthSession && router.push('/profile')}
-           className={`flex items-center gap-3 ${hasVisibleAuthSession ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-           title={hasVisibleAuthSession ? 'הפרופיל שלי' : ''}
-         >
-           <img src={LOGO_URL} className="w-10 h-10 rounded-full" />
-           <h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1>
+         <div className="flex items-center gap-3">
+           <div 
+             onClick={() => hasVisibleAuthSession && router.push('/profile')}
+             className={`flex items-center gap-3 ${hasVisibleAuthSession ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+             title={hasVisibleAuthSession ? 'הפרופיל שלי' : ''}
+           >
+             <img src={LOGO_URL} className="w-10 h-10 rounded-full" />
+             <h1 className="font-black text-slate-800 text-xl hidden md:block">הדודה</h1>
+           </div>
+           {hasVisibleAuthSession && (() => {
+             if (selectedTier === 'free') return null;
+             const isFriendsTier = selectedTier === 'friends';
+             const isSuperTier = selectedTier === 'super';
+             const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
+             const badgeClasses = isFriendsTier
+               ? 'from-emerald-500 to-teal-500'
+               : isSuperTier
+                 ? 'from-amber-500 to-orange-500'
+                 : 'from-indigo-600 to-violet-600';
+             const label = isFriendsTier ? 'Friends User' : isSuperTier ? 'Super User' : 'Basic User';
+             return (
+               <div className={`inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r px-3 py-1.5 text-xs font-bold text-white shadow-md ${badgeClasses}`}>
+                 <Icon className="w-3.5 h-3.5" />
+                 <span>{label}</span>
+               </div>
+             );
+           })()}
          </div>
          <div className="flex items-center gap-3">
             {hasVisibleAuthSession && (

@@ -143,7 +143,7 @@ export default function AdminPromptsClient() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => router.push('/admin')}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-600 transition hover:bg-slate-50"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-600 transition hover:bg-slate-50 cursor-pointer"
               title="Back to admin dashboard"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -155,7 +155,7 @@ export default function AdminPromptsClient() {
           </div>
           <button
             onClick={() => loadPrompts()}
-            className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white"
+            className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white cursor-pointer"
           >
             <RefreshCw className="h-4 w-4" />
             Refresh
@@ -171,7 +171,7 @@ export default function AdminPromptsClient() {
               <button
                 key={prompt.id}
                 onClick={() => setSelectedPromptId(prompt.id)}
-                className={`w-full rounded-2xl border p-4 text-left transition ${
+                className={`w-full rounded-2xl border p-4 text-left transition cursor-pointer ${
                   selectedPromptId === prompt.id
                     ? 'border-indigo-300 bg-indigo-50'
                     : 'border-slate-200 bg-white hover:bg-slate-50'
@@ -220,7 +220,7 @@ export default function AdminPromptsClient() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   onClick={() => runPromptAction('saveDraft', { draftContent: editedContent })}
-                  className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
                   disabled={busyAction !== null}
                 >
                   <Save className="h-4 w-4" />
@@ -228,7 +228,7 @@ export default function AdminPromptsClient() {
                 </button>
                 <button
                   onClick={() => runPromptAction('activateDraft')}
-                  className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 disabled:opacity-50 cursor-pointer"
                   disabled={busyAction !== null || !selectedPrompt.draft}
                 >
                   <FlaskConical className="h-4 w-4" />
@@ -236,7 +236,7 @@ export default function AdminPromptsClient() {
                 </button>
                 <button
                   onClick={() => runPromptAction('deactivateDraft')}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50 cursor-pointer"
                   disabled={busyAction !== null || !selectedPrompt.useDraft}
                 >
                   <FlaskConical className="h-4 w-4" />
@@ -244,7 +244,7 @@ export default function AdminPromptsClient() {
                 </button>
                 <button
                   onClick={() => window.confirm('Discard this draft?') && runPromptAction('discardDraft')}
-                  className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 disabled:opacity-50 cursor-pointer"
                   disabled={busyAction !== null || !selectedPrompt.draft}
                 >
                   <Trash2 className="h-4 w-4" />
@@ -252,7 +252,7 @@ export default function AdminPromptsClient() {
                 </button>
                 <button
                   onClick={() => window.confirm('Commit this draft to production?') && runPromptAction('commit')}
-                  className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
                   disabled={busyAction !== null || !selectedPrompt.draft}
                 >
                   <UploadCloud className="h-4 w-4" />

@@ -583,6 +583,42 @@ async function loadFeedbackEntriesWithFallback(usersById: Map<string, AnyRecord>
   return Array.from(normalizedEntries.values()).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
+async function batchFetchAuthEmails(uids: string[]): Promise<Map<string, string>> {
+  const emailMap = new Map<string, string>();
+
+  if (!uids.length) return emailMap;
+
+  try {
+    const admin = require('firebase-admin');
+
+    if (!admin.apps.length) getAdminDb();
+
+    const auth = admin.auth();
+    // getUsers accepts up to 100 identifiers at a time
+    const chunks: string[][] = [];
+
+    for (let i = 0; i < uids.length; i += 100) {
+      chunks.push(uids.slice(i, i + 100));
+    }
+
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        const result = await auth.getUsers(chunk.map((uid: string) => ({ uid })));
+
+        for (const userRecord of result.users) {
+          if (userRecord.email) {
+            emailMap.set(userRecord.uid, normalizeEmail(userRecord.email));
+          }
+        }
+      }),
+    );
+  } catch (error) {
+    logger.warning('Error batch-fetching auth emails', {}, error instanceof Error ? error : undefined);
+  }
+
+  return emailMap;
+}
+
 async function loadDashboardCollections(): Promise<DashboardCollections> {
   const db = getAdminDb();
   const [usersSnapshot, uploads, sessions, transactions, dailyStats, geminiUsage, analyticsEvents, buttonPresses, referralCodes, adminAuditLog] = await Promise.all([
@@ -600,9 +636,14 @@ async function loadDashboardCollections(): Promise<DashboardCollections> {
       .catch((): Array<TopLevelCollectionItem<AnyRecord>> => []),
   ]);
 
-  const users: DashboardUserDoc[] = usersSnapshot.docs.map((doc: any) => ({
-    id: doc.id,
-    data: doc.data() as AnyRecord,
+  // Enrich users missing an email field by fetching from Firebase Auth
+  const allUserDocs: DashboardUserDoc[] = usersSnapshot.docs.map((doc: any) => ({ id: doc.id, data: doc.data() as AnyRecord }));
+  const missingEmailUids = allUserDocs.filter((u: DashboardUserDoc) => !u.data.email).map((u: DashboardUserDoc) => u.id);
+  const authEmailMap = await batchFetchAuthEmails(missingEmailUids);
+
+  const users: DashboardUserDoc[] = allUserDocs.map((u: DashboardUserDoc) => ({
+    id: u.id,
+    data: authEmailMap.has(u.id) ? { ...u.data, email: authEmailMap.get(u.id) } : u.data,
   }));
 
   return {

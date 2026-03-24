@@ -21,9 +21,12 @@ import {
   ArrowLeft,
   BarChart3,
   Bot,
+  Check,
+  Copy,
   DollarSign,
   FileText,
   Gauge,
+  Gift,
   Layers3,
   MessageSquare,
   RefreshCw,
@@ -150,6 +153,9 @@ export default function AdminDashboardClient() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [preset, setPreset] = useState<'24h' | '7d' | '30d' | '90d'>('30d');
   const [error, setError] = useState<string | null>(null);
+  const [generatedFriendsCode, setGeneratedFriendsCode] = useState<string | null>(null);
+  const [friendsCodeCopied, setFriendsCodeCopied] = useState(false);
+  const [generatingFriendsCode, setGeneratingFriendsCode] = useState(false);
 
   const callAdminApi = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const headers = await getAuthHeaders();
@@ -220,6 +226,30 @@ export default function AdminDashboardClient() {
     const result = await callAdminApi<AdminLogEntry[]>('/api/admin/logs?limit=100');
     setLogs(result);
   }, [callAdminApi]);
+
+  const generateFriendsCode = useCallback(async () => {
+    setGeneratingFriendsCode(true);
+    setGeneratedFriendsCode(null);
+    setFriendsCodeCopied(false);
+    try {
+      const suffix = Math.random().toString(36).slice(2, 9).toUpperCase();
+      const code = `FRIENDS-${suffix}`;
+      const result = await callAdminApi<{ code: string }>('/api/admin/actions/generate-referral-code', {
+        method: 'POST',
+        body: JSON.stringify({ userId: 'admin', userName: 'Admin', code, uses: 1 }),
+      });
+      setGeneratedFriendsCode(result.code);
+    } finally {
+      setGeneratingFriendsCode(false);
+    }
+  }, [callAdminApi]);
+
+  const copyFriendsCode = useCallback(() => {
+    if (!generatedFriendsCode) return;
+    navigator.clipboard.writeText(generatedFriendsCode);
+    setFriendsCodeCopied(true);
+    setTimeout(() => setFriendsCodeCopied(false), 2000);
+  }, [generatedFriendsCode]);
 
   const runAdminAction = useCallback(async (key: string, path: string, body: Record<string, unknown>, onDone?: () => Promise<void>) => {
     setBusyAction(key);
@@ -301,7 +331,7 @@ export default function AdminDashboardClient() {
             <div className="flex items-center gap-3">
               <button
                 onClick={() => router.push('/')}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-600 transition hover:bg-slate-50"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 text-slate-600 transition hover:bg-slate-50 cursor-pointer"
                 title="Back to site"
               >
                 <ArrowLeft className="h-5 w-5" />
@@ -317,7 +347,7 @@ export default function AdminDashboardClient() {
               <button
                 key={item}
                 onClick={() => setPreset(item)}
-                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                className={`rounded-full px-4 py-2 text-sm font-semibold transition cursor-pointer ${
                   preset === item ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
@@ -326,7 +356,7 @@ export default function AdminDashboardClient() {
             ))}
             <button
               onClick={() => loadDashboard()}
-              className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700"
+              className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 cursor-pointer"
             >
               <RefreshCw className="h-4 w-4" />
               Refresh
@@ -345,7 +375,7 @@ export default function AdminDashboardClient() {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition cursor-pointer ${
                 activeTab === item.id ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
               }`}
             >
@@ -500,6 +530,42 @@ export default function AdminDashboardClient() {
 
         {activeTab === 'users' && (
           <div className="space-y-6">
+            {/* Generate one-time Friends code */}
+            <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100">
+                    <Gift className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-emerald-900">Generate Friends code</div>
+                    <div className="text-sm text-emerald-700">One-time use · 7 days unlimited access</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {generatedFriendsCode && (
+                    <div className="flex items-center gap-2 rounded-xl border-2 border-emerald-300 bg-white px-4 py-2">
+                      <span className="font-mono text-base font-bold tracking-widest text-emerald-800">{generatedFriendsCode}</span>
+                      <button
+                        onClick={copyFriendsCode}
+                        className="ml-1 flex items-center gap-1 rounded-lg bg-emerald-100 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-200"
+                      >
+                        {friendsCodeCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        {friendsCodeCopied ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    onClick={generateFriendsCode}
+                    disabled={generatingFriendsCode}
+                    className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                  >
+                    {generatingFriendsCode ? 'Generating…' : generatedFriendsCode ? 'Generate another' : 'Generate code'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <SectionCard
               title="Users"
               action={
@@ -515,7 +581,7 @@ export default function AdminDashboardClient() {
                   </div>
                   <button
                     onClick={() => loadUsers(userSearch)}
-                    className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                    className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white cursor-pointer"
                   >
                     Search
                   </button>
@@ -573,7 +639,7 @@ export default function AdminDashboardClient() {
                       <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => runAdminAction('reset-limit', '/api/admin/actions/reset-upload-limit', { userId: selectedUserDetail.user.userId }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                          className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                          className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
                           disabled={busyAction !== null}
                         >
                           Reset upload limit
@@ -582,7 +648,7 @@ export default function AdminDashboardClient() {
                           <button
                             key={tier}
                             onClick={() => runAdminAction(`tier-${tier}`, '/api/admin/actions/update-user-tier', { userId: selectedUserDetail.user.userId, tier }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50 cursor-pointer"
                             disabled={busyAction !== null}
                           >
                             Set {tier}
@@ -590,14 +656,14 @@ export default function AdminDashboardClient() {
                         ))}
                         <button
                           onClick={() => runAdminAction('referral', '/api/admin/actions/generate-referral-code', { userId: selectedUserDetail.user.userId, userName: selectedUserDetail.user.email || selectedUserDetail.user.userId }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                          className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 disabled:opacity-50"
+                          className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 disabled:opacity-50 cursor-pointer"
                           disabled={busyAction !== null}
                         >
                           Generate referral code
                         </button>
                         <button
                           onClick={() => runAdminAction('reconcile', '/api/admin/actions/reconcile-subscription', { userId: selectedUserDetail.user.userId }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 disabled:opacity-50"
+                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 disabled:opacity-50 cursor-pointer"
                           disabled={busyAction !== null}
                         >
                           Reconcile subscription
@@ -705,7 +771,7 @@ export default function AdminDashboardClient() {
                     />
                     Comment only
                   </label>
-                  <button onClick={() => loadFeedback()} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Apply</button>
+                  <button onClick={() => loadFeedback()} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white cursor-pointer">Apply</button>
                 </div>
               }
             >
@@ -848,7 +914,7 @@ export default function AdminDashboardClient() {
           <SectionCard
             title="Recent logs"
             action={
-              <button onClick={() => loadLogs()} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+              <button onClick={() => loadLogs()} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white cursor-pointer">
                 Refresh logs
               </button>
             }
