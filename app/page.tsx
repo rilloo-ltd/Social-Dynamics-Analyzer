@@ -2427,7 +2427,7 @@ export default function HomePage() {
             יצירה משותפת
           </p>
           <p className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">
-            הדודה היא יצירה משותפת של Riloo וד"ר רועי צזנה
+            הדודה היא יצירה משותפת של Rilloo וד"ר רועי צזנה
           </p>
         </div>
       </div>
