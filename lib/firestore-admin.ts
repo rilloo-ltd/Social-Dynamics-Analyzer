@@ -4,6 +4,7 @@ import { sanitizeCacheKey } from './cache-utils';
 import {
   AdminAuditLogEntry,
   AnalysisDepthMode,
+  AnalysisModelPreference,
   ParticipantAxisDistributionSummary,
   ParticipantAxisKey,
   ParticipantAxisScore
@@ -20,6 +21,21 @@ const PRIVILEGED_SUPER_USER_EMAILS = new Set([
 ]);
 const FREE_TIER_TOTAL_UPLOAD_LIMIT = 3;
 const SUPER_TIER_UPLOAD_LIMIT = 50;
+export const MAX_SUBMISSIONS_PER_WINDOW = 3;
+export const SUBMISSION_WINDOW_MS = 24 * 60 * 60 * 1000;
+const SUBMISSION_QUOTA_DOC_ID = 'fileSubmissions';
+
+export interface RollingSubmissionQuotaSnapshot {
+  canSubmit: boolean;
+  currentCount: number;
+  maxSubmissions: number;
+  remainingSubmissions: number;
+  resetAt: string | null;
+}
+
+export interface RollingSubmissionQuotaRecordResult extends RollingSubmissionQuotaSnapshot {
+  accepted: boolean;
+}
 
 function isPrivilegedSuperUserEmail(email?: string): boolean {
   return PRIVILEGED_SUPER_USER_EMAILS.has(normalizeEmail(email));
@@ -99,7 +115,7 @@ interface AnalyticsEventInput {
   sessionId?: string | null;
   tier?: string | null;
   analysisType?: string | null;
-  analysisMode?: AnalysisDepthMode | null;
+  analysisMode?: AnalysisDepthMode | AnalysisModelPreference | null;
   model?: string | null;
   endpoint?: string | null;
   inputTokens?: number | null;
@@ -131,7 +147,7 @@ interface FeedbackLogInput {
   rating: number;
   comment: string;
   analysisType?: string | null;
-  analysisMode?: AnalysisDepthMode | null;
+  analysisMode?: AnalysisDepthMode | AnalysisModelPreference | null;
   tier?: string | null;
   chatCode?: string | null;
   timestamp?: string;
@@ -550,6 +566,113 @@ export async function getParticipantAxisDistributionSummary(): Promise<Participa
   return inMemoryParticipantAxisSummary || buildParticipantAxisDistributionSummary();
 }
 
+// ============ ROLLING SUBMISSION QUOTA ============
+
+function normalizeQuotaTimestamps(value: unknown, nowMs: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const cutoffMs = nowMs - SUBMISSION_WINDOW_MS;
+
+  return value
+    .map((timestamp) => typeof timestamp === 'string' ? timestamp : '')
+    .filter((timestamp) => {
+      const parsedMs = Date.parse(timestamp);
+      return Number.isFinite(parsedMs) && parsedMs > cutoffMs && parsedMs <= nowMs + 60_000;
+    })
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+}
+
+function buildRollingSubmissionQuotaSnapshot(recentTimestamps: string[], nowMs: number): RollingSubmissionQuotaSnapshot {
+  const currentCount = recentTimestamps.length;
+  const remainingSubmissions = Math.max(0, MAX_SUBMISSIONS_PER_WINDOW - currentCount);
+  const oldestTimestamp = recentTimestamps[0];
+  const resetAt = oldestTimestamp && remainingSubmissions === 0
+    ? new Date(Date.parse(oldestTimestamp) + SUBMISSION_WINDOW_MS).toISOString()
+    : null;
+
+  return {
+    canSubmit: currentCount < MAX_SUBMISSIONS_PER_WINDOW,
+    currentCount,
+    maxSubmissions: MAX_SUBMISSIONS_PER_WINDOW,
+    remainingSubmissions,
+    resetAt,
+  };
+}
+
+export async function getRollingSubmissionQuota(userId: string): Promise<RollingSubmissionQuotaSnapshot> {
+  const db = getAdminDb();
+  const nowMs = Date.now();
+  const quotaDoc = await db.collection('users').doc(userId).collection('quota').doc(SUBMISSION_QUOTA_DOC_ID).get();
+  const recentTimestamps = normalizeQuotaTimestamps(quotaDoc.data()?.submissionTimestamps, nowMs);
+
+  return buildRollingSubmissionQuotaSnapshot(recentTimestamps, nowMs);
+}
+
+export async function recordRollingSubmission(
+  userId: string,
+  source: 'primary_upload' | 'pasted_text' | 'ask_aunt_extra' = 'primary_upload'
+): Promise<RollingSubmissionQuotaRecordResult> {
+  const db = getAdminDb();
+  const userRef = db.collection('users').doc(userId);
+  const quotaRef = userRef.collection('quota').doc(SUBMISSION_QUOTA_DOC_ID);
+  const now = new Date();
+  const nowMs = now.getTime();
+  const timestamp = now.toISOString();
+
+  const result = await db.runTransaction(async (tx: any) => {
+    const quotaDoc = await tx.get(quotaRef);
+    const recentTimestamps = normalizeQuotaTimestamps(quotaDoc.data()?.submissionTimestamps, nowMs);
+    const currentSnapshot = buildRollingSubmissionQuotaSnapshot(recentTimestamps, nowMs);
+
+    if (!currentSnapshot.canSubmit) {
+      return {
+        ...currentSnapshot,
+        accepted: false,
+      };
+    }
+
+    const nextTimestamps = [...recentTimestamps, timestamp];
+
+    tx.set(quotaRef, {
+      submissionTimestamps: nextTimestamps,
+      lastSubmissionAt: timestamp,
+      lastSubmissionSource: source,
+      updatedAt: timestamp,
+    }, { merge: true });
+
+    tx.set(userRef, {
+      lastSubmissionAt: timestamp,
+      updatedAt: timestamp,
+    }, { merge: true });
+
+    return {
+      ...buildRollingSubmissionQuotaSnapshot(nextTimestamps, nowMs),
+      accepted: true,
+    };
+  });
+
+  if (!result.accepted) {
+    await recordAnalyticsEvent({
+      timestamp,
+      category: 'upload',
+      eventName: 'submission_rejected_limit',
+      status: 'rejected',
+      userId,
+      message: 'Submission rejected because the rolling upload quota was reached',
+      metadata: {
+        source,
+        currentCount: result.currentCount,
+        maxSubmissions: result.maxSubmissions,
+        resetAt: result.resetAt,
+      },
+    }).catch(() => {});
+  }
+
+  return result;
+}
+
 // ============ UPLOAD TRACKING ============
 
 export async function checkDailyUploadLimit(userId: string, maxUploads: number = FREE_TIER_TOTAL_UPLOAD_LIMIT) {
@@ -685,98 +808,21 @@ export async function updateUserTier(
   maxDailyUploads: number,
   tierExpiresAt?: string | null
 ) {
-  const db = getAdminDb();
-  
-  try {
-    await db.collection('users').doc(userId).set({
-      tier,
-      maxDailyUploads,
-      tierExpiresAt: tierExpiresAt ?? null,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
-    
-    logger.info('User tier updated', { userId, tier, maxDailyUploads });
-    return { success: true };
-  } catch (error) {
-    logger.error('Error updating user tier', { userId, tier, maxDailyUploads }, error instanceof Error ? error : undefined);
-    throw new Error('Failed to update user tier');
-  }
+  logger.warning('Ignored legacy tier update request because tier privileges are disabled', {
+    userId,
+    tier,
+    maxDailyUploads,
+    tierExpiresAt: tierExpiresAt || null,
+  });
+
+  return { success: false, message: 'Tier privileges are disabled.' };
 }
 
 export async function getUserTier(userId: string): Promise<{
   tier: 'free' | 'basic' | 'super' | 'friends';
   maxDailyUploads: number;
 }> {
-  const db = getAdminDb();
-  
-  try {
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    const data = userDoc.exists ? userDoc.data() : undefined;
-    const resolvedEmail = normalizeEmail(data?.email) || await getAuthUserEmail(userId);
-
-    if (isPrivilegedSuperUserEmail(resolvedEmail)) {
-      const needsSync =
-        !userDoc.exists ||
-        data?.tier !== 'super' ||
-        data?.maxDailyUploads !== SUPER_TIER_UPLOAD_LIMIT ||
-        normalizeEmail(data?.email) !== resolvedEmail;
-
-      if (needsSync) {
-        await userRef.set({
-          tier: 'super',
-          maxDailyUploads: SUPER_TIER_UPLOAD_LIMIT,
-          isAdmin: isAllowedAdminEmail(resolvedEmail),
-          updatedAt: new Date().toISOString(),
-          ...(resolvedEmail && { email: resolvedEmail })
-        }, { merge: true });
-      }
-
-      return { tier: 'super', maxDailyUploads: SUPER_TIER_UPLOAD_LIMIT };
-    }
-
-    if (!userDoc.exists) {
-      return { tier: 'free', maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT };
-    }
-
-    const tier = data?.tier || 'free';
-    const tierExpiresAt: string | null = data?.tierExpiresAt || null;
-
-    // Check if time-limited tier has expired
-    if (tier === 'friends' && tierExpiresAt && new Date(tierExpiresAt) < new Date()) {
-      await userRef.set({
-        tier: 'free',
-        maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT,
-        tierExpiresAt: null,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      return { tier: 'free', maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT };
-    }
-
-    const resolvedMaxDailyUploads =
-      tier === 'super' || tier === 'friends'
-        ? SUPER_TIER_UPLOAD_LIMIT
-        : tier === 'basic'
-          ? Number(data?.maxDailyUploads || 10)
-          : FREE_TIER_TOTAL_UPLOAD_LIMIT;
-
-    if (data?.maxDailyUploads !== resolvedMaxDailyUploads) {
-      await userRef.set({
-        maxDailyUploads: resolvedMaxDailyUploads,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-    }
-
-    const bonusUploads = Number.isFinite(data?.bonusUploads) ? Math.max(0, Number(data.bonusUploads)) : 0;
-
-    return {
-      tier,
-      maxDailyUploads: resolvedMaxDailyUploads + bonusUploads
-    };
-  } catch (error) {
-    logger.error('Error getting user tier', { userId }, error instanceof Error ? error : undefined);
-    return { tier: 'free', maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT };
-  }
+  return { tier: 'free', maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT };
 }
 
 /**
@@ -792,12 +838,10 @@ export async function ensureUserInitialized(userId: string, email?: string) {
     const resolvedEmail = normalizeEmail(email) || await getAuthUserEmail(userId);
     
     if (!userDoc.exists) {
-      const isPrivilegedUser = isPrivilegedSuperUserEmail(resolvedEmail);
-
       // Create user document with defaults
       await userRef.set({
-        tier: isPrivilegedUser ? 'super' : 'free',
-        maxDailyUploads: isPrivilegedUser ? SUPER_TIER_UPLOAD_LIMIT : FREE_TIER_TOTAL_UPLOAD_LIMIT,
+        tier: 'free',
+        maxDailyUploads: FREE_TIER_TOTAL_UPLOAD_LIMIT,
         totalUploadsUsed: 0,
         isAdmin: isAllowedAdminEmail(resolvedEmail),
         createdAt: new Date().toISOString(),

@@ -1,20 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serverAnalyzeChatFull } from '@/lib/gemini-server';
 import { recordAnalyticsEvent } from '@/lib/firestore-admin';
-import {
-  consumeSuccessfulAnalysisQuota,
-  ensureAnalysisQuotaAvailable,
-  isAnalysisQuotaExceededError,
-} from '@/lib/analysis-quota';
 import { hasCompletedFullAnalysisOutput } from '@/lib/analysis-output';
 import { withAnalysisTimeout } from '@/lib/analysis-timeout';
 import { logger } from '@/lib/logger';
+import { requireAuthenticatedRequest, userOwnsSession } from '@/lib/request-auth';
 
 export async function POST(request: NextRequest) {
   let body: any = null;
+  let authedUserId: string | null = null;
+  let authedUserEmail: string | null = null;
   try {
     body = await request.json();
-    const { messages, targetUser, limit, tier, analysisMode, userId, userEmail, sessionId } = body;
+    const { messages, targetUser, limit, userId, sessionId } = body;
+    const modelPreference = 'fast' as const;
 
     if (!messages || !targetUser) {
       return NextResponse.json(
@@ -23,32 +22,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const auth = await requireAuthenticatedRequest(request, userId || null);
+    if (!auth.ok) {
+      return auth.response;
+    }
+    authedUserId = auth.context.userId;
+    authedUserEmail = auth.context.userEmail;
+
+    if (!(await userOwnsSession(authedUserId, sessionId))) {
+      return NextResponse.json({ error: 'A valid uploaded chat session is required' }, { status: 403 });
+    }
+
     logger.info('Individual chat analysis started', {
       targetUser,
       messageCount: messages.length,
       limit,
-      tier: tier || 'free',
-      analysisMode: analysisMode || 'default'
+      modelPreference: modelPreference || 'fast'
     });
-
-    await ensureAnalysisQuotaAvailable(userId || null, userEmail || null);
 
     const routeStartedAt = Date.now();
     await recordAnalyticsEvent({
       category: 'analysis',
       eventName: 'individual_analysis',
       status: 'started',
-      userId: userId || null,
-      userEmail: userEmail || null,
+      userId: authedUserId,
+      userEmail: authedUserEmail,
       sessionId: sessionId || null,
-      tier: tier || 'free',
+      tier: null,
       analysisType: 'individual_analysis',
-      analysisMode: analysisMode || 'standard',
+      analysisMode: modelPreference || 'fast',
       endpoint: '/api/analyze-chat-full',
       message: 'Individual analysis started',
       metadata: {
         messageCount: messages.length,
         targetUser,
+        modelPreference: modelPreference || 'fast',
       },
     });
 
@@ -57,9 +65,8 @@ export async function POST(request: NextRequest) {
         messages,
         targetUser,
         limit || Infinity,
-        tier || 'free',
-        analysisMode,
-        { userId: userId || null, userEmail: userEmail || null, sessionId: sessionId || null }
+        modelPreference || 'fast',
+        { userId: authedUserId, userEmail: authedUserEmail, sessionId: sessionId || null }
       )
     );
 
@@ -67,64 +74,53 @@ export async function POST(request: NextRequest) {
       throw new Error('לא התקבל פלט לניתוח.');
     }
 
-    const quota = await consumeSuccessfulAnalysisQuota(userId || null, userEmail || null);
-
     await recordAnalyticsEvent({
       category: 'analysis',
       eventName: 'individual_analysis',
       status: 'completed',
-      userId: userId || null,
-      userEmail: userEmail || null,
+      userId: authedUserId,
+      userEmail: authedUserEmail,
       sessionId: sessionId || null,
-      tier: tier || 'free',
+      tier: null,
       analysisType: 'individual_analysis',
-      analysisMode: analysisMode || 'standard',
+      analysisMode: modelPreference || 'fast',
       model: result.telemetry?.model || null,
       endpoint: '/api/analyze-chat-full',
       durationMs: result.telemetry?.durationMs || (Date.now() - routeStartedAt),
       message: 'Individual analysis completed',
       metadata: {
         messageCount: messages.length,
+        modelPreference: modelPreference || 'fast',
       },
     });
 
-    return NextResponse.json({
-      ...result,
-      quota,
-    });
+    return NextResponse.json(result);
   } catch (error) {
-    const isQuotaError = isAnalysisQuotaExceededError(error);
     logger.error('Individual chat analysis failed', {}, error instanceof Error ? error : undefined);
     await recordAnalyticsEvent({
       category: 'analysis',
       eventName: 'individual_analysis',
-      status: isQuotaError ? 'rejected' : 'failed',
-      level: isQuotaError ? 'warning' : 'error',
-      userId: body?.userId || null,
-      userEmail: body?.userEmail || null,
+      status: 'failed',
+      level: 'error',
+      userId: authedUserId || body?.userId || null,
+      userEmail: authedUserEmail || null,
       sessionId: body?.sessionId || null,
-      tier: body?.tier || 'free',
+      tier: null,
       analysisType: 'individual_analysis',
-      analysisMode: body?.analysisMode || 'standard',
+      analysisMode: 'fast',
       endpoint: '/api/analyze-chat-full',
       errorCode: error instanceof Error ? error.name : 'AnalysisError',
       message: error instanceof Error ? error.message : 'Analysis failed',
       metadata: {
         targetUser: body?.targetUser || null,
         messageCount: Array.isArray(body?.messages) ? body.messages.length : 0,
-        quota: isQuotaError ? error.quota : null,
+        modelPreference: 'fast',
       },
     }).catch(() => {});
     
     return NextResponse.json(
-      isQuotaError
-        ? {
-            error: error.message,
-            quotaExceeded: true,
-            ...error.quota,
-          }
-        : { error: error instanceof Error ? error.message : 'Analysis failed' },
-      { status: isQuotaError ? 429 : 500 }
+      { error: error instanceof Error ? error.message : 'Analysis failed' },
+      { status: 500 }
     );
   }
 }

@@ -1,20 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serverAskTheAunt } from '@/lib/gemini-server';
 import { recordAnalyticsEvent } from '@/lib/firestore-admin';
-import {
-  consumeSuccessfulAnalysisQuota,
-  ensureAnalysisQuotaAvailable,
-  isAnalysisQuotaExceededError,
-} from '@/lib/analysis-quota';
 import { hasCompletedSingleAnalysisOutput } from '@/lib/analysis-output';
 import { withAnalysisTimeout } from '@/lib/analysis-timeout';
 import { logger } from '@/lib/logger';
+import { requireAuthenticatedRequest, userOwnsSession } from '@/lib/request-auth';
 
 export async function POST(request: NextRequest) {
   let body: any = null;
+  let authedUserId: string | null = null;
+  let authedUserEmail: string | null = null;
   try {
     body = await request.json();
-    const { chatSections, targetUser, question, tier, analysisMode, userId, userEmail, sessionId, questionMode } = body;
+    const { chatSections, targetUser, question, userId, sessionId, questionMode } = body;
+    const modelPreference = 'fast' as const;
 
     if (!Array.isArray(chatSections) || !question) {
       return NextResponse.json(
@@ -23,33 +22,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const auth = await requireAuthenticatedRequest(request, userId || null);
+    if (!auth.ok) {
+      return auth.response;
+    }
+    authedUserId = auth.context.userId;
+    authedUserEmail = auth.context.userEmail;
+
+    if (!(await userOwnsSession(authedUserId, sessionId))) {
+      return NextResponse.json({ error: 'A valid uploaded chat session is required' }, { status: 403 });
+    }
+
     logger.info('Ask the Aunt analysis started', {
       targetUser,
       questionLength: String(question).length,
       sectionCount: chatSections.length,
-      tier: tier || 'free',
-      analysisMode: analysisMode || 'default'
+      modelPreference: modelPreference || 'fast'
     });
-
-    await ensureAnalysisQuotaAvailable(userId || null, userEmail || null);
 
     const routeStartedAt = Date.now();
     await recordAnalyticsEvent({
       category: 'analysis',
       eventName: 'ask_aunt',
       status: 'started',
-      userId: userId || null,
-      userEmail: userEmail || null,
+      userId: authedUserId,
+      userEmail: authedUserEmail,
       sessionId: sessionId || null,
-      tier: tier || 'free',
+      tier: null,
       analysisType: 'ask_aunt',
-      analysisMode: analysisMode || 'standard',
+      analysisMode: modelPreference || 'fast',
       endpoint: '/api/ask-the-aunt',
       message: 'Ask the Aunt started',
       metadata: {
         sectionCount: chatSections.length,
         questionMode: questionMode || (targetUser ? 'person' : 'general'),
         targetUser: targetUser || null,
+        modelPreference: modelPreference || 'fast',
       },
     });
 
@@ -58,9 +66,8 @@ export async function POST(request: NextRequest) {
         chatSections,
         targetUser,
         question,
-        tier || 'free',
-        analysisMode,
-        { userId: userId || null, userEmail: userEmail || null, sessionId: sessionId || null }
+        modelPreference || 'fast',
+        { userId: authedUserId, userEmail: authedUserEmail, sessionId: sessionId || null }
       )
     );
 
@@ -68,18 +75,16 @@ export async function POST(request: NextRequest) {
       throw new Error('לא התקבל פלט לניתוח.');
     }
 
-    const quota = await consumeSuccessfulAnalysisQuota(userId || null, userEmail || null);
-
     await recordAnalyticsEvent({
       category: 'analysis',
       eventName: 'ask_aunt',
       status: 'completed',
-      userId: userId || null,
-      userEmail: userEmail || null,
+      userId: authedUserId,
+      userEmail: authedUserEmail,
       sessionId: sessionId || null,
-      tier: tier || 'free',
+      tier: null,
       analysisType: 'ask_aunt',
-      analysisMode: analysisMode || 'standard',
+      analysisMode: modelPreference || 'fast',
       model: result.telemetry?.model || null,
       endpoint: '/api/ask-the-aunt',
       durationMs: result.telemetry?.durationMs || (Date.now() - routeStartedAt),
@@ -88,27 +93,24 @@ export async function POST(request: NextRequest) {
         sectionCount: chatSections.length,
         questionMode: questionMode || (targetUser ? 'person' : 'general'),
         targetUser: targetUser || null,
+        modelPreference: modelPreference || 'fast',
       },
     });
 
-    return NextResponse.json({
-      ...result,
-      quota,
-    });
+    return NextResponse.json(result);
   } catch (error) {
-    const isQuotaError = isAnalysisQuotaExceededError(error);
     logger.error('Ask the Aunt analysis failed', {}, error instanceof Error ? error : undefined);
     await recordAnalyticsEvent({
       category: 'analysis',
       eventName: 'ask_aunt',
-      status: isQuotaError ? 'rejected' : 'failed',
-      level: isQuotaError ? 'warning' : 'error',
-      userId: body?.userId || null,
-      userEmail: body?.userEmail || null,
+      status: 'failed',
+      level: 'error',
+      userId: authedUserId || body?.userId || null,
+      userEmail: authedUserEmail || null,
       sessionId: body?.sessionId || null,
-      tier: body?.tier || 'free',
+      tier: null,
       analysisType: 'ask_aunt',
-      analysisMode: body?.analysisMode || 'standard',
+      analysisMode: 'fast',
       endpoint: '/api/ask-the-aunt',
       errorCode: error instanceof Error ? error.name : 'AnalysisError',
       message: error instanceof Error ? error.message : 'Analysis failed',
@@ -116,19 +118,13 @@ export async function POST(request: NextRequest) {
         sectionCount: Array.isArray(body?.chatSections) ? body.chatSections.length : 0,
         questionMode: body?.questionMode || (body?.targetUser ? 'person' : 'general'),
         targetUser: body?.targetUser || null,
-        quota: isQuotaError ? error.quota : null,
+        modelPreference: 'fast',
       },
     }).catch(() => {});
 
     return NextResponse.json(
-      isQuotaError
-        ? {
-            error: error.message,
-            quotaExceeded: true,
-            ...error.quota,
-          }
-        : { error: error instanceof Error ? error.message : 'Analysis failed' },
-      { status: isQuotaError ? 429 : 500 }
+      { error: error instanceof Error ? error.message : 'Analysis failed' },
+      { status: 500 }
     );
   }
 }

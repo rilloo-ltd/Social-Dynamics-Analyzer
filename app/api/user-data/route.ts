@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminDb, getUserTier } from '@/lib/firestore-admin';
+import {
+  ensureUserInitialized,
+  getAdminDb,
+  getRollingSubmissionQuota,
+  MAX_SUBMISSIONS_PER_WINDOW,
+} from '@/lib/firestore-admin';
 
 // Get Firebase Admin Auth
 function getAdminAuth() {
@@ -23,6 +28,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const userId = searchParams.get('userId');
+    let authenticatedEmail: string | undefined;
 
     if (!userId) {
       return NextResponse.json({ error: 'Missing userId' }, { status: 400 });
@@ -48,27 +54,31 @@ export async function GET(req: NextRequest) {
       if (decodedToken.uid !== userId) {
         return NextResponse.json({ error: 'Unauthorized - Cannot access other user data' }, { status: 403 });
       }
+
+      authenticatedEmail = decodedToken.email || undefined;
     } catch (authError) {
       console.error('Token verification failed:', authError);
       return NextResponse.json({ error: 'Invalid authentication token' }, { status: 401 });
     }
 
     const db = getAdminDb();
+    await ensureUserInitialized(userId, authenticatedEmail);
+    const submissionQuota = await getRollingSubmissionQuota(userId);
 
     // Get user data
     const userDoc = await db.collection('users').doc(userId).get();
-    
-    const effectiveTier = await getUserTier(userId);
 
     if (!userDoc.exists) {
       return NextResponse.json({ 
         success: true, 
         userData: {
-          tier: effectiveTier.tier,
-          maxDailyUploads: effectiveTier.maxDailyUploads,
+          tier: 'free',
+          maxDailyUploads: MAX_SUBMISSIONS_PER_WINDOW,
           totalUploadsUsed: 0
         },
-        transactions: []
+        transactions: [],
+        submissionQuota,
+        uploadsToday: submissionQuota.currentCount
       });
     }
 
@@ -89,27 +99,17 @@ export async function GET(req: NextRequest) {
       ...doc.data()
     }));
 
-    // Get today's upload count
-    const today = new Date().toISOString().split('T')[0];
-    const dailyStatsDoc = await db
-      .collection('users')
-      .doc(userId)
-      .collection('dailyStats')
-      .doc(today)
-      .get();
-    
-    const uploadsToday = dailyStatsDoc.exists ? (dailyStatsDoc.data()?.uploadCount || 0) : 0;
-
     return NextResponse.json({ 
       success: true,
       userData: {
         ...userData,
-        tier: effectiveTier.tier,
-        maxDailyUploads: effectiveTier.maxDailyUploads,
+        tier: userData?.tier || 'free',
+        maxDailyUploads: MAX_SUBMISSIONS_PER_WINDOW,
         totalUploadsUsed
       },
       transactions,
-      uploadsToday
+      submissionQuota,
+      uploadsToday: submissionQuota.currentCount
     });
   } catch (error) {
     console.error('Error fetching user data:', error);

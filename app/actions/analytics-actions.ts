@@ -8,7 +8,7 @@ import {
   logFeedback as firestoreLogFeedback,
   logGeminiUsage
 } from '@/lib/firestore-admin';
-import { AnalysisDepthMode } from '@/types';
+import { AnalysisModelPreference } from '@/types';
 
 export async function logUploadAction(userId: string, participantsCount: number, tokensCount: number) {
   if (!userId) {
@@ -49,7 +49,7 @@ export async function logFeedbackAction(
   rating: number,
   comment: string,
   analysisType?: string | null,
-  analysisMode?: AnalysisDepthMode | null,
+  analysisMode?: AnalysisModelPreference | null,
   tier?: string | null,
   chatCode?: string | null
 ) {

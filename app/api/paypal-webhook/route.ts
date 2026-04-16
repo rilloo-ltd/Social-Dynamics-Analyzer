@@ -180,8 +180,6 @@ export async function POST(req: NextRequest) {
         if (cancelledUserId) {
           await db.collection('users').doc(cancelledUserId).update({
             subscriptionStatus: 'CANCELLED',
-            tier: 'free',
-            maxDailyUploads: 3,
             updatedAt: new Date().toISOString()
           });
           
@@ -228,8 +226,6 @@ export async function POST(req: NextRequest) {
         if (suspendedUserId) {
           await db.collection('users').doc(suspendedUserId).update({
             subscriptionStatus: 'SUSPENDED',
-            tier: 'free',
-            maxDailyUploads: 3,
             updatedAt: new Date().toISOString()
           });
 
@@ -270,8 +266,6 @@ export async function POST(req: NextRequest) {
         if (expiredUserId) {
           await db.collection('users').doc(expiredUserId).update({
             subscriptionStatus: 'EXPIRED',
-            tier: 'free',
-            maxDailyUploads: 3,
             updatedAt: new Date().toISOString()
           });
 

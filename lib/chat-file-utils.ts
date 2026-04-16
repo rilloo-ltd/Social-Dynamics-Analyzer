@@ -1,6 +1,7 @@
 /**
  * Utilities for handling chat file uploads (TXT and ZIP files)
  */
+import JSZip from 'jszip';
 
 /**
  * Check if a file is a supported chat upload file type
@@ -83,9 +84,6 @@ const readTextFile = async (file: File): Promise<string> => {
  */
 const readZipFile = async (file: File): Promise<string> => {
   try {
-    // Dynamically import JSZip to reduce initial bundle size
-    const JSZip = (await import('jszip')).default;
-    
     const zip = new JSZip();
     const zipContent = await zip.loadAsync(file);
     

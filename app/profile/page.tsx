@@ -1,40 +1,25 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { AlertCircle, Calendar, CheckCircle, Loader2, LogOut, X } from 'lucide-react';
 import { auth } from '@/lib/firebase';
 import { getStoredTestAuthEmail, logOut } from '@/lib/auth';
 import { LOGO_URL } from '@/lib/constants';
-import { 
-  CreditCard, 
-  Calendar, 
-  TrendingUp, 
-  X,
-  Loader2,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-  LogOut,
-  Zap,
-  Crown,
-  Gift,
-  Clock
-} from 'lucide-react';
-import { UpgradeModal } from '@/components/UpgradeModal';
-import { PayPalScriptProvider } from '@paypal/react-paypal-js';
+
+interface SubmissionQuota {
+  currentCount: number;
+  maxSubmissions: number;
+  remainingSubmissions: number;
+  resetAt: string | null;
+}
 
 interface UserData {
-  tier: 'free' | 'basic' | 'super' | 'friends';
-  maxDailyUploads: number;
   subscriptionId?: string;
   subscriptionStatus?: string;
-  subscriptionPlanId?: string;
   nextBillingDate?: string;
-  subscriptionStartDate?: string;
-  uploadsToday?: number;
-  totalUploadsUsed?: number;
-  tierExpiresAt?: string;
+  email?: string;
 }
 
 interface Transaction {
@@ -51,79 +36,46 @@ export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null);
   const [testAuthEmail, setTestAuthEmail] = useState<string | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
+  const [quota, setQuota] = useState<SubmissionQuota>({ currentCount: 0, maxSubmissions: 3, remainingSubmissions: 3, resetAt: null });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelLoading, setCancelLoading] = useState(false);
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) {
         const storedTestAuthEmail = getStoredTestAuthEmail();
-
         if (storedTestAuthEmail) {
-          setUser(null);
           setTestAuthEmail(storedTestAuthEmail);
-          setUserData({
-            tier: 'super',
-            maxDailyUploads: 50,
-            uploadsToday: 0,
-            totalUploadsUsed: 0,
-          });
-          setTransactions([]);
           setLoading(false);
           return;
         }
 
         router.push('/login');
-      } else {
-        setTestAuthEmail(null);
-        setUser(currentUser);
-        fetchUserData(currentUser.uid);
+        return;
       }
+
+      setTestAuthEmail(null);
+      setUser(currentUser);
+      void fetchUserData(currentUser);
     });
 
     return () => unsubscribe();
   }, [router]);
 
-  const fetchUserData = async (userId: string) => {
+  const fetchUserData = async (currentUser: User) => {
     try {
       setLoading(true);
-      
-      // Get auth token
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
-        console.error('No auth token available');
-        return;
-      }
-      
-      // Fetch user data
-      const response = await fetch(`/api/user-data?userId=${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      const token = await currentUser.getIdToken();
+      const response = await fetch(`/api/user-data?userId=${currentUser.uid}`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
-      
-      if (data.success) {
-        setUserData({
-          ...data.userData,
-          uploadsToday: data.uploadsToday || 0,
-          totalUploadsUsed: data.userData?.totalUploadsUsed || 0,
-        });
-        setTransactions(data.transactions || []);
-      }
 
-      // Check admin status
-      const adminResponse = await fetch('/api/check-admin', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      const adminData = await adminResponse.json();
-      if (adminData.success) {
-        setIsAdmin(adminData.isAdmin);
+      if (data.success) {
+        setUserData(data.userData || {});
+        setQuota(data.submissionQuota || { currentCount: 0, maxSubmissions: 3, remainingSubmissions: 3, resetAt: null });
+        setTransactions(data.transactions || []);
       }
     } catch (error) {
       console.error('Error fetching user data:', error);
@@ -133,41 +85,30 @@ export default function ProfilePage() {
   };
 
   const handleCancelSubscription = async () => {
-    if (!userData?.subscriptionId || !user) return;
+    if (!user || !userData?.subscriptionId) return;
 
-    const confirmed = confirm('האם אתה בטוח שברצונך לבטל את המנוי? תאבד גישה לתכונות הפרימיום.');
-    
-    if (!confirmed) return;
+    if (!confirm('לבטל את המנוי הקיים ב-PayPal?')) {
+      return;
+    }
 
+    setCancelLoading(true);
     try {
-      setCancelLoading(true);
-      
-      // Get auth token
       const token = await user.getIdToken();
-      if (!token) {
-        alert('שגיאה באימות. אנא התחבר מחדש.');
-        return;
-      }
-      
       const response = await fetch('/api/cancel-subscription', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          userId: user.uid,
-          subscriptionId: userData.subscriptionId
-        })
+        body: JSON.stringify({ userId: user.uid, subscriptionId: userData.subscriptionId }),
       });
-
       const data = await response.json();
 
       if (data.success) {
-        alert('המנוי בוטל בהצלחה. תוכל להמשיך להשתמש עד תאריך החיוב הבא.');
-        await fetchUserData(user.uid);
+        alert('המנוי בוטל בהצלחה.');
+        await fetchUserData(user);
       } else {
-        alert('שגיאה בביטול המנוי. אנא צור קשר עם התמיכה.');
+        alert(data.error || 'שגיאה בביטול המנוי. אנא נסה שוב.');
       }
     } catch (error) {
       console.error('Cancel subscription error:', error);
@@ -184,422 +125,135 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="text-center">
-          <Loader2 className="w-12 h-12 text-white animate-spin mx-auto mb-4" />
-          <p className="text-white text-lg">טוען נתונים...</p>
+          <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-slate-700" />
+          <p className="text-slate-600">טוען נתונים...</p>
         </div>
       </div>
     );
   }
 
-  const getTierConfig = (tier: string) => {
-    switch (tier) {
-      case 'basic':
-        return {
-          label: 'מנוי בסיסי',
-          color: 'from-blue-500 to-blue-600',
-          cardBg: 'from-blue-50 to-blue-100',
-          border: 'border-blue-200',
-          textMain: 'text-blue-900',
-          textSub: 'text-blue-800',
-          textMuted: 'text-blue-700',
-          icon: <TrendingUp className="w-6 h-6" />,
-          price: '$5',
-          period: 'לחודש',
-          quota: `${userData?.maxDailyUploads || 10} ניתוחים שבועיים`,
-          features: [
-            'ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר',
-            'שאילת שאלות על שיחות ווטסאפ',
-            'העלאת יותר משיחה אחת להצלבת עמדות',
-            'ניתוח דינמיקות קבוצתיות',
-          ],
-        };
-      case 'super':
-        return {
-          label: 'מנוי-על',
-          color: 'from-purple-500 to-pink-600',
-          cardBg: 'from-purple-50 to-pink-100',
-          border: 'border-purple-300',
-          textMain: 'text-purple-900',
-          textSub: 'text-purple-800',
-          textMuted: 'text-purple-700',
-          icon: <CreditCard className="w-6 h-6" />,
-          price: '$30',
-          period: 'לחודש',
-          quota: `${userData?.maxDailyUploads || 50} ניתוחים שבועיים`,
-          features: [
-            "גישה מוקדמת לפיצ'רים נוספים",
-            'ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר',
-            'שאילת שאלות על שיחות ווטסאפ',
-            'העלאת יותר משיחה אחת להצלבת עמדות',
-            'ניתוח דינמיקות קבוצתיות',
-          ],
-        };
-      case 'friends':
-        return {
-          label: 'גישת חברים',
-          color: 'from-emerald-500 to-teal-600',
-          cardBg: 'from-emerald-50 to-teal-50',
-          border: 'border-emerald-200',
-          textMain: 'text-emerald-900',
-          textSub: 'text-emerald-800',
-          textMuted: 'text-emerald-700',
-          icon: <Gift className="w-6 h-6" />,
-          price: '🎁',
-          period: 'הזמנה',
-          quota: 'ניתוחים ללא הגבלה',
-          features: [
-            'גישה בלתי מוגבלת לכל הניתוחים',
-            "כל פיצ'רי המנוי-על כלולים",
-          ],
-        };
-      default:
-        return {
-          label: 'חינם',
-          color: 'from-slate-500 to-slate-600',
-          cardBg: 'from-slate-50 to-slate-100',
-          border: 'border-slate-200',
-          textMain: 'text-slate-800',
-          textSub: 'text-slate-700',
-          textMuted: 'text-slate-600',
-          icon: <AlertCircle className="w-6 h-6" />,
-          price: '$0',
-          period: 'לתמיד',
-          quota: '3 ניתוחים חינמיים',
-          features: [
-            'ניתוחים בסיסיים',
-            'שאילת שאלות על שיחות ווטסאפ',
-            'ניתוח דינמיקות קבוצתיות',
-          ],
-        };
-    }
-  };
-
-  const getStatusIcon = (status?: string) => {
-    switch (status) {
-      case 'ACTIVE':
-        return <CheckCircle className="w-5 h-5 text-green-600" />;
-      case 'CANCELLED':
-      case 'SUSPENDED':
-      case 'EXPIRED':
-        return <XCircle className="w-5 h-5 text-red-600" />;
-      default:
-        return <AlertCircle className="w-5 h-5 text-yellow-600" />;
-    }
-  };
-
-  const getStatusText = (status?: string) => {
-    switch (status) {
-      case 'ACTIVE':
-        return 'פעיל';
-      case 'CANCELLED':
-        return 'מבוטל';
-      case 'SUSPENDED':
-        return 'מושהה';
-      case 'EXPIRED':
-        return 'פג תוקף';
-      default:
-        return 'לא ידוע';
-    }
-  };
-
-  const tierConfig = getTierConfig(userData?.tier || 'free');
-  const isFreeTier = userData?.tier === 'free';
-  const isFriendsTier = userData?.tier === 'friends';
-  const currentUsageCount = isFreeTier ? (userData?.totalUploadsUsed || 0) : (userData?.uploadsToday || 0);
-  const usageLimit = userData?.maxDailyUploads || 0;
-  const remainingUsage = Math.max(0, usageLimit - currentUsageCount);
-  const isWeeklyTier = !isFreeTier && !isFriendsTier;
-
-  const friendsDaysLeft = isFriendsTier && userData?.tierExpiresAt
-    ? Math.max(0, Math.ceil((new Date(userData.tierExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+  const email = user?.email || testAuthEmail || userData?.email || '';
+  const resetLabel = quota.resetAt
+    ? new Date(quota.resetAt).toLocaleString('he-IL', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
     : null;
+  const hasLegacyActiveSubscription = Boolean(userData?.subscriptionId && userData.subscriptionStatus === 'ACTIVE');
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 relative overflow-hidden">
-      {/* Background decorative elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -left-40 w-80 h-80 bg-white/10 rounded-full blur-3xl"></div>
-        <div className="absolute top-1/2 -right-40 w-96 h-96 bg-white/10 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 left-1/3 w-80 h-80 bg-white/10 rounded-full blur-3xl"></div>
-      </div>
-
-      <div className="relative z-10 max-w-4xl mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-3">
-            <img 
-              src={LOGO_URL} 
-              alt="Logo" 
-              className="h-12 w-12 rounded-full cursor-pointer hover:scale-105 transition-transform"
-              onClick={() => router.push('/')}
-            />
-          </div>
+    <div className="min-h-screen bg-slate-50" dir="rtl">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-4">
+          <button type="button" onClick={() => router.push('/')} className="flex items-center gap-3 cursor-pointer">
+            <img src={LOGO_URL} alt="" className="h-10 w-10 rounded-full" />
+            <span className="font-black text-slate-900">הדודה</span>
+          </button>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl transition-all cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
           >
-            <LogOut className="w-4 h-4" />
-            <span>התנתק</span>
+            <LogOut className="h-4 w-4" />
+            התנתק
           </button>
         </div>
+      </header>
 
-        {/* Profile Card */}
-        <div className="bg-white rounded-3xl shadow-2xl p-8 mb-6">
-          <h1 className="text-3xl font-black text-slate-800 mb-6 text-right" dir="rtl">
-            הפרופיל שלי
-          </h1>
+      <main className="mx-auto max-w-4xl px-4 py-8">
+        <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-3xl font-black text-slate-900">הפרופיל שלי</h1>
+          <p className="mt-2 text-sm text-slate-600">{email}</p>
+        </section>
 
-          {/* User Info */}
-          <div className="mb-8 p-6 bg-gradient-to-r from-slate-50 to-slate-100 rounded-2xl" dir="rtl">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-                {(user?.email || testAuthEmail)?.charAt(0).toUpperCase()}
-              </div>
-              <div className="text-right flex-1">
-                <div className="text-lg font-bold text-slate-800">{user?.email || testAuthEmail}</div>
-                <div className="text-sm text-slate-600">משתמש רשום</div>
-              </div>
-              {isAdmin && (
-                <div className="bg-gradient-to-r from-yellow-400 to-orange-400 px-4 py-2 rounded-xl shadow-md">
-                  <div className="flex items-center gap-2 text-white">
-                    <Crown className="w-5 h-5" />
-                    <span className="font-bold text-sm">Admin</span>
-                  </div>
-                </div>
-              )}
+        <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-black text-slate-900">מכסת העלאות</h2>
+              <p className="mt-1 text-sm text-slate-600">אפשר לשלוח 3 קבצים או טקסטים בכל 24 שעות.</p>
+            </div>
+            <div className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">
+              {quota.remainingSubmissions} נותרו
             </div>
           </div>
 
-          {/* Friends tier tracking card */}
-          {isFriendsTier && userData?.tierExpiresAt && (
-            <div className="mb-8 p-6 bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-2xl" dir="rtl">
-              <div className="flex items-start gap-4">
-                <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-emerald-100">
-                  <Gift className="w-6 h-6 text-emerald-600" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-emerald-900 mb-1">גישת חברים פעילה 🎉</h3>
-                  <p className="text-sm text-emerald-700 mb-4">קיבלת גישה בלתי מוגבלת באמצעות קוד הזמנה</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-xl bg-white border border-emerald-200 p-3 text-center">
-                      <div className="flex items-center justify-center gap-1 text-emerald-600 mb-1">
-                        <Clock className="w-4 h-4" />
-                      </div>
-                      <div className="text-2xl font-black text-emerald-800">{friendsDaysLeft}</div>
-                      <div className="text-xs text-emerald-600 font-medium">ימים נותרו</div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-2 flex items-center justify-between text-sm font-bold text-slate-700">
+              <span>שימוש ב-24 השעות האחרונות</span>
+              <span>{quota.currentCount} / {quota.maxSubmissions}</span>
+            </div>
+            <div className="h-3 overflow-hidden rounded-full bg-white">
+              <div
+                className="h-full rounded-full bg-slate-900 transition-all"
+                style={{ width: `${Math.min(100, (quota.currentCount / Math.max(quota.maxSubmissions, 1)) * 100)}%` }}
+              />
+            </div>
+            <p className="mt-3 text-sm text-slate-600">
+              {resetLabel ? `העלאה חדשה תתפנה סביב ${resetLabel}.` : 'יש לך מכסה זמינה כרגע.'}
+            </p>
+          </div>
+        </section>
+
+        {hasLegacyActiveSubscription && (
+          <section className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+            <div className="mb-4 flex items-start gap-3">
+              <AlertCircle className="mt-1 h-5 w-5 text-amber-700" />
+              <div>
+                <h2 className="text-xl font-black text-amber-950">מנוי PayPal קיים</h2>
+                <p className="mt-1 text-sm leading-7 text-amber-800">
+                  המנוי כבר לא נותן הרשאות נוספות באפליקציה. אפשר לבטל אותו כאן.
+                </p>
+                {userData?.nextBillingDate && (
+                  <p className="mt-2 inline-flex items-center gap-2 text-sm text-amber-800">
+                    <Calendar className="h-4 w-4" />
+                    חיוב הבא: {new Date(userData.nextBillingDate).toLocaleDateString('he-IL')}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={handleCancelSubscription}
+              disabled={cancelLoading}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50 cursor-pointer"
+            >
+              {cancelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+              בטל מנוי
+            </button>
+          </section>
+        )}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="mb-4 text-2xl font-black text-slate-900">היסטוריית חיובים ישנה</h2>
+          {transactions.length === 0 ? (
+            <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-600">אין חיובים להצגה.</p>
+          ) : (
+            <div className="space-y-3">
+              {transactions.map((transaction) => (
+                <div key={transaction.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-4">
+                  <div>
+                    <div className="font-bold text-slate-800">
+                      {transaction.type === 'subscription_activated' && 'מנוי הופעל'}
+                      {transaction.type === 'subscription_payment' && 'תשלום חודשי'}
+                      {transaction.type === 'subscription_cancelled' && 'מנוי בוטל'}
+                      {!['subscription_activated', 'subscription_payment', 'subscription_cancelled'].includes(transaction.type) && transaction.type}
                     </div>
-                    <div className="rounded-xl bg-white border border-emerald-200 p-3 text-center">
-                      <div className="flex items-center justify-center gap-1 text-emerald-600 mb-1">
-                        <Calendar className="w-4 h-4" />
-                      </div>
-                      <div className="text-sm font-bold text-emerald-800 pt-1">
-                        {new Date(userData.tierExpiresAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' })}
-                      </div>
-                      <div className="text-xs text-emerald-600 font-medium">תאריך תפוגה</div>
-                    </div>
+                    <div className="text-sm text-slate-500">{new Date(transaction.timestamp).toLocaleString('he-IL')}</div>
                   </div>
-                  {friendsDaysLeft !== null && friendsDaysLeft <= 2 && (
-                    <div className="mt-3 flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">
-                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                      <span>הגישה שלך עומדת לפוג בקרוב. שקול לשדרג למנוי קבוע.</span>
-                    </div>
+                  {transaction.amount ? (
+                    <div className="font-black text-slate-900">${transaction.amount.toFixed(2)}</div>
+                  ) : (
+                    <CheckCircle className="h-5 w-5 text-slate-400" />
                   )}
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* Subscription Status */}
-          <div className={`mb-8 rounded-3xl border-2 ${tierConfig.border} bg-gradient-to-br ${tierConfig.cardBg} p-8 shadow-lg`} dir="rtl">
-            {/* Plan header row */}
-            <div className="flex items-start justify-between mb-4">
-              <div className="text-right">
-                <div className={`text-2xl font-black ${tierConfig.textMain}`}>{tierConfig.label}</div>
-                <div className={`text-sm font-semibold ${tierConfig.textMuted} mt-0.5`}>{tierConfig.quota}</div>
-              </div>
-              <div className={`flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br ${tierConfig.color} shadow`}>
-                <span className="text-white">{tierConfig.icon}</span>
-              </div>
-            </div>
-
-            {/* Price */}
-            <div className={`flex items-baseline gap-1 mb-5`}>
-              <span className={`text-4xl font-black ${tierConfig.textMain}`}>{tierConfig.price}</span>
-              <span className={`text-sm ${tierConfig.textMuted}`}>{tierConfig.period}</span>
-            </div>
-
-            {/* Features */}
-            <ul className="space-y-2.5 mb-6" dir="rtl">
-              <li className={`flex items-center gap-2 font-bold ${tierConfig.textMain}`}>
-                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                <span>{tierConfig.quota}</span>
-              </li>
-              {tierConfig.features.map((f: string, i: number) => (
-                <li key={i} className={`flex items-center gap-2 ${tierConfig.textSub}`}>
-                  <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                  <span>{f}</span>
-                </li>
               ))}
-            </ul>
-
-            {/* Usage Tracker */}
-            {!isFriendsTier && (
-              <div className="bg-white/60 rounded-2xl p-4 mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className={`text-sm font-bold ${tierConfig.textMain}`}>
-                    {isFreeTier ? 'שימוש חינמי כולל' : 'שימוש שבועי'}
-                  </span>
-                  <span className={`text-sm font-bold ${tierConfig.textMain}`}>{currentUsageCount} / {usageLimit}</span>
-                </div>
-                <div className="w-full rounded-full h-3 overflow-hidden bg-white/50">
-                  <div
-                    className={`h-full rounded-full bg-gradient-to-r ${tierConfig.color} transition-all duration-500`}
-                    style={{ width: `${Math.min(100, (currentUsageCount / Math.max(usageLimit, 1)) * 100)}%` }}
-                  />
-                </div>
-                <div className={`mt-2 text-xs ${tierConfig.textMuted}`}>
-                  {isFreeTier
-                    ? (remainingUsage > 0
-                        ? `נותרו ${remainingUsage} ניתוחים חינמיים`
-                        : 'הניתוחים החינמיים שלך הסתיימו.')
-                    : `נותרו ${remainingUsage} ניתוחים להיום`}
-                </div>
-              </div>
-            )}
-
-            {userData?.subscriptionStatus && (
-              <div className={`flex items-center gap-2 ${tierConfig.textMuted} text-sm`}>
-                {getStatusIcon(userData.subscriptionStatus)}
-                <span>סטטוס מנוי: <strong>{getStatusText(userData.subscriptionStatus)}</strong></span>
-              </div>
-            )}
-
-            {userData?.nextBillingDate && userData.subscriptionStatus === 'ACTIVE' && (
-              <div className={`flex items-center gap-2 text-sm mt-2 ${tierConfig.textMuted}`}>
-                <Calendar className="w-4 h-4" />
-                <span>חיוב הבא: {new Date(userData.nextBillingDate).toLocaleDateString('he-IL')}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Upgrade Plan Section */}
-          {(!userData?.subscriptionId || userData.subscriptionStatus !== 'ACTIVE') && (
-            <div className="mb-8 p-6 bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-2xl" dir="rtl">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-indigo-900 mb-2 flex items-center gap-2">
-                    <Crown className="w-5 h-5" />
-                    שדרג את המנוי שלך
-                  </h3>
-                  <p className="text-sm text-indigo-700 mb-4">
-                    קבל גישה לניתוחים נוספים, פיצ'רים מתקדמים ותמיכה עדיפות
-                  </p>
-                  <button
-                    onClick={() => setShowUpgradeModal(true)}
-                    className="px-6 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-all shadow-md cursor-pointer flex items-center gap-2"
-                  >
-                    <Zap className="w-4 h-4" />
-                    <span>צפה בתוכניות</span>
-                  </button>
-                </div>
-              </div>
             </div>
           )}
-
-          {/* Subscription Actions */}
-          {userData?.subscriptionId && userData.subscriptionStatus === 'ACTIVE' && (
-            <div className="mb-8 p-6 bg-red-50 border-2 border-red-200 rounded-2xl" dir="rtl">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-red-800 mb-2">ביטול מנוי</h3>
-                  <p className="text-sm text-red-600 mb-4">
-                    ביטול המנוי יחזיר אותך למנוי החינם בתום תקופת החיוב הנוכחית.
-                  </p>
-                  <button
-                    onClick={handleCancelSubscription}
-                    disabled={cancelLoading}
-                    className="px-6 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
-                  >
-                    {cancelLoading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>מבטל...</span>
-                      </>
-                    ) : (
-                      <>
-                        <X className="w-4 h-4" />
-                        <span>בטל מנוי</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Transaction History */}
-          <div dir="rtl">
-            <h2 className="text-2xl font-black text-slate-800 mb-4">היסטוריית תשלומים</h2>
-            
-            {transactions.length === 0 ? (
-              <div className="p-8 bg-slate-50 rounded-xl text-center">
-                <p className="text-slate-600">אין תשלומים להצגה</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {transactions.map((transaction) => (
-                  <div 
-                    key={transaction.id} 
-                    className="p-4 bg-slate-50 rounded-xl flex items-center justify-between hover:bg-slate-100 transition-all"
-                  >
-                    <div className="flex-1">
-                      <div className="font-bold text-slate-800">
-                        {transaction.type === 'subscription_activated' && 'מנוי הופעל'}
-                        {transaction.type === 'subscription_payment' && 'תשלום חודשי'}
-                        {transaction.type === 'subscription_cancelled' && 'מנוי בוטל'}
-                      </div>
-                      <div className="text-sm text-slate-600">
-                        {new Date(transaction.timestamp).toLocaleString('he-IL')}
-                      </div>
-                    </div>
-                    {transaction.amount && (
-                      <div className="text-lg font-bold text-slate-800">
-                        ${transaction.amount.toFixed(2)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Back Button */}
-        <div className="text-center">
-          <button
-            onClick={() => router.push('/')}
-            className="px-8 py-3 bg-white text-purple-600 rounded-2xl font-bold hover:bg-purple-50 transition-all shadow-lg cursor-pointer"
-          >
-            חזרה לדף הבית
-          </button>
-        </div>
-      </div>
-
-      {/* Upgrade Modal */}
-      <PayPalScriptProvider options={{ clientId: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || '', vault: true, intent: 'subscription' }}>
-        <UpgradeModal 
-          isOpen={showUpgradeModal}
-          onClose={() => setShowUpgradeModal(false)}
-          onUpgrade={(tier) => {
-            fetchUserData(user?.uid || '');
-          }}
-          currentCount={currentUsageCount}
-          maxUploads={userData?.maxDailyUploads || 3}
-          userId={user?.uid}
-        />
-      </PayPalScriptProvider>
+        </section>
+      </main>
     </div>
   );
 }

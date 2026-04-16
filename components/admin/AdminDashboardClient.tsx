@@ -21,12 +21,8 @@ import {
   ArrowLeft,
   BarChart3,
   Bot,
-  Check,
-  Copy,
-  DollarSign,
   FileText,
   Gauge,
-  Gift,
   Layers3,
   MessageSquare,
   RefreshCw,
@@ -44,17 +40,15 @@ import {
   AdminPromptStatus,
   AdminUserDetailSnapshot,
   AdminUserRow,
-  UserTier,
 } from '@/types';
 import { useAdminAccess } from './useAdminAccess';
 
-type AdminTab = 'overview' | 'usage' | 'users' | 'revenue' | 'feedback' | 'ai' | 'prompts' | 'logs';
+type AdminTab = 'overview' | 'usage' | 'users' | 'feedback' | 'ai' | 'prompts' | 'logs';
 
 const TAB_ITEMS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview', label: 'Overview', icon: <Gauge className="w-4 h-4" /> },
   { id: 'usage', label: 'Usage', icon: <BarChart3 className="w-4 h-4" /> },
   { id: 'users', label: 'Users', icon: <Users className="w-4 h-4" /> },
-  { id: 'revenue', label: 'Revenue', icon: <DollarSign className="w-4 h-4" /> },
   { id: 'feedback', label: 'Feedback', icon: <MessageSquare className="w-4 h-4" /> },
   { id: 'ai', label: 'AI Ops', icon: <Bot className="w-4 h-4" /> },
   { id: 'prompts', label: 'Prompts', icon: <Sparkles className="w-4 h-4" /> },
@@ -150,15 +144,8 @@ export default function AdminDashboardClient() {
   const [feedbackQuery, setFeedbackQuery] = useState('');
   const [feedbackCommentOnly, setFeedbackCommentOnly] = useState(true);
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
-  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [preset, setPreset] = useState<'24h' | '7d' | '30d' | '90d'>('30d');
   const [error, setError] = useState<string | null>(null);
-  const [generatedFriendsCode, setGeneratedFriendsCode] = useState<string | null>(null);
-  const [friendsCodeCopied, setFriendsCodeCopied] = useState(false);
-  const [generatingFriendsCode, setGeneratingFriendsCode] = useState(false);
-  const [generatedCreditCode, setGeneratedCreditCode] = useState<string | null>(null);
-  const [creditCodeCopied, setCreditCodeCopied] = useState(false);
-  const [generatingCreditCode, setGeneratingCreditCode] = useState(false);
 
   const callAdminApi = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const headers = await getAuthHeaders();
@@ -229,68 +216,6 @@ export default function AdminDashboardClient() {
     const result = await callAdminApi<AdminLogEntry[]>('/api/admin/logs?limit=100');
     setLogs(result);
   }, [callAdminApi]);
-
-  const generateFriendsCode = useCallback(async () => {
-    setGeneratingFriendsCode(true);
-    setGeneratedFriendsCode(null);
-    setFriendsCodeCopied(false);
-    try {
-      const suffix = Math.random().toString(36).slice(2, 9).toUpperCase();
-      const code = `FRIENDS-${suffix}`;
-      const result = await callAdminApi<{ code: string }>('/api/admin/actions/generate-referral-code', {
-        method: 'POST',
-        body: JSON.stringify({ userId: 'admin', userName: 'Admin', code, uses: 1 }),
-      });
-      setGeneratedFriendsCode(result.code);
-    } finally {
-      setGeneratingFriendsCode(false);
-    }
-  }, [callAdminApi]);
-
-  const copyFriendsCode = useCallback(() => {
-    if (!generatedFriendsCode) return;
-    navigator.clipboard.writeText(generatedFriendsCode);
-    setFriendsCodeCopied(true);
-    setTimeout(() => setFriendsCodeCopied(false), 2000);
-  }, [generatedFriendsCode]);
-
-  const generateCreditCode = useCallback(async () => {
-    setGeneratingCreditCode(true);
-    setGeneratedCreditCode(null);
-    setCreditCodeCopied(false);
-    try {
-      const result = await callAdminApi<{ code: string }>('/api/admin/actions/generate-credit-code', {
-        method: 'POST',
-        body: JSON.stringify({ credits: 2 }),
-      });
-      setGeneratedCreditCode(result.code);
-    } finally {
-      setGeneratingCreditCode(false);
-    }
-  }, [callAdminApi]);
-
-  const copyCreditCode = useCallback(() => {
-    if (!generatedCreditCode) return;
-    navigator.clipboard.writeText(generatedCreditCode);
-    setCreditCodeCopied(true);
-    setTimeout(() => setCreditCodeCopied(false), 2000);
-  }, [generatedCreditCode]);
-
-  const runAdminAction = useCallback(async (key: string, path: string, body: Record<string, unknown>, onDone?: () => Promise<void>) => {
-    setBusyAction(key);
-    try {
-      await callAdminApi(path, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-      await loadDashboard();
-      if (onDone) {
-        await onDone();
-      }
-    } finally {
-      setBusyAction(null);
-    }
-  }, [callAdminApi, loadDashboard]);
 
   useEffect(() => {
     if (!checking && !isAdmin) {
@@ -459,7 +384,7 @@ export default function AdminDashboardClient() {
                 </div>
               </SectionCard>
 
-              <SectionCard title="Gemini cost and feedback">
+              <SectionCard title="AI cost and feedback">
                 <div className="h-80">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={dashboard.timeSeries}>
@@ -555,78 +480,6 @@ export default function AdminDashboardClient() {
 
         {activeTab === 'users' && (
           <div className="space-y-6">
-            {/* Generate one-time Friends code */}
-            <div className="rounded-2xl border-2 border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100">
-                    <Gift className="h-5 w-5 text-emerald-600" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-emerald-900">Generate Friends code</div>
-                    <div className="text-sm text-emerald-700">One-time use · 7 days unlimited access</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {generatedFriendsCode && (
-                    <div className="flex items-center gap-2 rounded-xl border-2 border-emerald-300 bg-white px-4 py-2">
-                      <span className="font-mono text-base font-bold tracking-widest text-emerald-800">{generatedFriendsCode}</span>
-                      <button
-                        onClick={copyFriendsCode}
-                        className="ml-1 flex items-center gap-1 rounded-lg bg-emerald-100 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-200"
-                      >
-                        {friendsCodeCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                        {friendsCodeCopied ? 'Copied!' : 'Copy'}
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    onClick={generateFriendsCode}
-                    disabled={generatingFriendsCode}
-                    className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
-                  >
-                    {generatingFriendsCode ? 'Generating…' : generatedFriendsCode ? 'Generate another' : 'Generate code'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Generate one-time +2 Credits code */}
-            <div className="rounded-2xl border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
-                    <Sparkles className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-blue-900">Generate +2 Credits code</div>
-                    <div className="text-sm text-blue-700">One-time use · +2 lifetime upload credits</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {generatedCreditCode && (
-                    <div className="flex items-center gap-2 rounded-xl border-2 border-blue-300 bg-white px-4 py-2">
-                      <span className="font-mono text-base font-bold tracking-widest text-blue-800">{generatedCreditCode}</span>
-                      <button
-                        onClick={copyCreditCode}
-                        className="ml-1 flex items-center gap-1 rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-200"
-                      >
-                        {creditCodeCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                        {creditCodeCopied ? 'Copied!' : 'Copy'}
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    onClick={generateCreditCode}
-                    disabled={generatingCreditCode}
-                    className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
-                  >
-                    {generatingCreditCode ? 'Generating…' : generatedCreditCode ? 'Generate another' : 'Generate code'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
             <SectionCard
               title="Users"
               action={
@@ -654,7 +507,6 @@ export default function AdminDashboardClient() {
                   <thead className="text-slate-500">
                     <tr>
                       <th className="pb-3">Email</th>
-                      <th className="pb-3">Tier</th>
                       <th className="pb-3">Uploads</th>
                       <th className="pb-3">Last activity</th>
                       <th className="pb-3">Subscription</th>
@@ -668,9 +520,6 @@ export default function AdminDashboardClient() {
                         onClick={() => loadUserDetail(user.userId)}
                       >
                         <td className="py-3 font-medium text-slate-900">{user.email || user.userId}</td>
-                        <td className="py-3">
-                          <StatusBadge label={user.tier} tone={user.tier === 'super' ? 'amber' : user.tier === 'basic' ? 'blue' : 'slate'} />
-                        </td>
                         <td className="py-3">{user.totalUploads} total / {user.uploadsToday} today</td>
                         <td className="py-3">{formatTimestamp(user.lastActivity)}</td>
                         <td className="py-3">{user.subscriptionStatus || 'none'}</td>
@@ -689,47 +538,10 @@ export default function AdminDashboardClient() {
                 <div className="grid gap-6 xl:grid-cols-[1.3fr_1fr]">
                   <div className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-2">
-                      <MetricCard title="Tier" value={selectedUserDetail.user.tier} />
-                      <MetricCard title="Upload limit" value={String(selectedUserDetail.user.maxDailyUploads)} />
+                      <MetricCard title="Account type" value="Standard" />
+                      <MetricCard title="Rolling quota" value="3 / 24h" />
                       <MetricCard title="Uploads" value={`${selectedUserDetail.user.totalUploads}`} hint={`${selectedUserDetail.user.uploadsToday} today`} />
-                      <MetricCard title="Subscription" value={selectedUserDetail.user.subscriptionStatus || 'none'} />
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 p-4">
-                      <div className="mb-3 text-sm font-bold text-slate-900">Safe actions</div>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => runAdminAction('reset-limit', '/api/admin/actions/reset-upload-limit', { userId: selectedUserDetail.user.userId }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                          className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
-                          disabled={busyAction !== null}
-                        >
-                          Reset upload limit
-                        </button>
-                        {(['free', 'basic', 'super'] as UserTier[]).map((tier) => (
-                          <button
-                            key={tier}
-                            onClick={() => runAdminAction(`tier-${tier}`, '/api/admin/actions/update-user-tier', { userId: selectedUserDetail.user.userId, tier }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50 cursor-pointer"
-                            disabled={busyAction !== null}
-                          >
-                            Set {tier}
-                          </button>
-                        ))}
-                        <button
-                          onClick={() => runAdminAction('referral', '/api/admin/actions/generate-referral-code', { userId: selectedUserDetail.user.userId, userName: selectedUserDetail.user.email || selectedUserDetail.user.userId }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                          className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 disabled:opacity-50 cursor-pointer"
-                          disabled={busyAction !== null}
-                        >
-                          Generate referral code
-                        </button>
-                        <button
-                          onClick={() => runAdminAction('reconcile', '/api/admin/actions/reconcile-subscription', { userId: selectedUserDetail.user.userId }, async () => loadUserDetail(selectedUserDetail.user.userId))}
-                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 disabled:opacity-50 cursor-pointer"
-                          disabled={busyAction !== null}
-                        >
-                          Reconcile subscription
-                        </button>
-                      </div>
+                      <MetricCard title="Legacy subscription" value={selectedUserDetail.user.subscriptionStatus || 'none'} />
                     </div>
                   </div>
 
@@ -750,57 +562,6 @@ export default function AdminDashboardClient() {
                 </div>
               </SectionCard>
             ) : null}
-          </div>
-        )}
-
-        {activeTab === 'revenue' && (
-          <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <MetricCard title="Estimated MRR" value={formatCurrency(dashboard.revenue.estimatedActiveMonthlyRevenueUsd)} />
-              <MetricCard title="New subscriptions" value={String(dashboard.revenue.newSubscriptions)} />
-              <MetricCard title="Renewals" value={String(dashboard.revenue.renewals)} />
-              <MetricCard title="Cancellations" value={String(dashboard.revenue.cancellations)} />
-            </div>
-            <div className="grid gap-6 xl:grid-cols-2">
-              <SectionCard title="Active subscriptions by tier">
-                <BreakdownList
-                  items={Object.entries(dashboard.revenue.activeSubscriptionsByTier).map(([label, value]) => ({ label, value }))}
-                />
-              </SectionCard>
-              <SectionCard title="Referral and unlimited-access metrics">
-                <div className="space-y-3 text-sm text-slate-700">
-                  <div>Referral codes generated: <strong>{dashboard.revenue.referralCodesGenerated}</strong></div>
-                  <div>Referral redemptions: <strong>{dashboard.revenue.referralRedemptions}</strong></div>
-                  <div>Unlimited-access users: <strong>{dashboard.revenue.unlimitedAccessUsers}</strong></div>
-                </div>
-              </SectionCard>
-            </div>
-            <SectionCard title="Recent transactions">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="text-slate-500">
-                    <tr>
-                      <th className="pb-3">Time</th>
-                      <th className="pb-3">Type</th>
-                      <th className="pb-3">Amount</th>
-                      <th className="pb-3">Tier</th>
-                      <th className="pb-3">Subscription</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboard.revenue.recentTransactions.map((transaction) => (
-                      <tr key={transaction.id} className="border-t border-slate-100">
-                        <td className="py-3">{formatTimestamp(transaction.timestamp)}</td>
-                        <td className="py-3">{transaction.type}</td>
-                        <td className="py-3">{transaction.amount !== null ? `${transaction.amount} ${transaction.currency || ''}` : 'N/A'}</td>
-                        <td className="py-3">{transaction.tier || 'N/A'}</td>
-                        <td className="py-3">{transaction.subscriptionId || 'N/A'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </SectionCard>
           </div>
         )}
 

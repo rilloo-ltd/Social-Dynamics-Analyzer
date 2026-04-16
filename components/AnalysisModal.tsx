@@ -409,7 +409,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
     if (!shareVisualsRef.current) return;
 
     if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-      alert('×”×“×¤×“×¤×Ÿ ×”× ×•×›×—×™ ×œ× ×ª×•×ž×š ×‘×”×¢×ª×§×ª ×ª×ž×•× ×•×ª ×œ×œ×•×—.');
+      alert('הדפדפן הנוכחי לא תומך בהעתקת תמונות ללוח.');
       return;
     }
 
@@ -432,7 +432,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
       showCopiedFeedback('visuals');
     } catch (err) {
       console.error('Failed to copy visuals:', err);
-      alert('×œ× × ×™×ª×Ÿ ×”×™×” ×œ×”×¢×ª×™×§ ××ª ×”×•×•×™×–×•××œ×™× ××ª×ž×•× ×”. × ×¡×• ×©×•×‘ ×¢×•×“ ×¨×’×¢.');
+      alert('לא ניתן היה להעתיק את הוויזואלים כתמונה. נסו שוב עוד רגע.');
     } finally {
       setCopyingVisuals(false);
     }

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { FileUpload } from '@/components/FileUpload';
 import { parseChatFile } from '@/services/chatParser';
-import { AnalysisDepthMode, ChatMessage, ChatRecordSection, ParsedChat, AnalysisType, CardColor, UserTier } from '@/types';
+import { AnalysisModelPreference, ChatMessage, ChatRecordSection, ParsedChat, AnalysisType, CardColor } from '@/types';
 import { createFullAnalysisCacheKey, createGroupDynamicsCacheKey, createRomanticDynamicsCacheKey } from '@/lib/cache-utils';
 import { 
   buildPersonReferenceAliases,
@@ -20,8 +20,7 @@ import {
   replacePersonAliasesInText
 } from '@/lib/chat-utils';
 import { isSupportedChatUploadFile, readChatUploadFile } from '@/lib/chat-file-utils';
-import { logUploadAction, logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
-import { checkUnlimitedAccessAction } from '@/app/actions/admin-actions';
+import { logButtonClickAction, logShareAction, logImageGenerationAction, logFeedbackAction } from '@/app/actions/analytics-actions';
 import { AnalysisCard } from '@/components/AnalysisCard';
 import { AnalysisModal } from '@/components/AnalysisModal';
 import { GroupParticipantSelector } from '@/components/GroupParticipantSelector';
@@ -29,15 +28,12 @@ import { HowToExport } from '@/components/HowToExport';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import RegenerateConfirmModal from '@/components/RegenerateConfirmModal';
 import AskTheAuntModal from '@/components/AskTheAuntModal';
-import AnalysisSpeedModal from '@/components/AnalysisSpeedModal';
 import { BrainIcon, GroupIcon, HappyIcon, SecretIcon, WarningIcon, LightbulbIcon } from '@/components/Icons';
-import { Lock, Star, Zap, User, Heart, Shield, Search, Sparkles, Quote, FileText, Crown, CheckCircle, XCircle, AlertCircle, TrendingUp, Gift, Hash, LogOut, UserCircle2, LogIn } from 'lucide-react';
+import { Lock, User, Heart, Shield, Search, Sparkles, Quote, FileText, Hash, LogOut, UserCircle2, LogIn } from 'lucide-react';
 import Link from 'next/link';
 import { 
   LOGO_URL, 
-  TIER_CONFIG, 
   ANALYSIS_CONFIG, 
-  FREE_TIER_TOTAL_ANALYSES,
   MAX_FILE_SIZE_BYTES,
   PRIVACY_DISCLAIMER_TEXT,
   LOADING_MESSAGES_PHASE_1,
@@ -50,7 +46,6 @@ import { isAllowedAdminEmail } from '@/lib/admin-identity';
 import { hasCompletedFullAnalysisOutput, hasCompletedSingleAnalysisOutput } from '@/lib/analysis-output';
 import { ANALYSIS_EXECUTION_TIMEOUT_MS, ANALYSIS_TIMEOUT_ERROR_MESSAGE } from '@/lib/analysis-timeout';
 import AuthDetails from '@/components/AuthDetails';
-import PromoCodeModal from '@/components/PromoCodeModal';
 import { auth } from '@/lib/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -64,10 +59,6 @@ import {
   trackFeedback,
   trackButtonClick 
 } from '@/lib/mixpanel';
-
-type PendingAnalysisRequest =
-  | { kind: 'analysis'; type: AnalysisType; participants?: string[]; bypassCache?: boolean }
-  | { kind: 'askAunt'; mode: 'person' | 'general' };
 
 function CoCredit({ className }: { className?: string }) {
   return (
@@ -101,7 +92,6 @@ export default function HomePage() {
   const [currentLoadingSnippet, setCurrentLoadingSnippet] = useState<string | null>(null);
   const [displayedMessage, setDisplayedMessage] = useState<string>("");
   const [isGroupSelectorOpen, setIsGroupSelectorOpen] = useState(false);
-  const [selectedTier, setSelectedTier] = useState<UserTier>('free');
   const [loadingMessages, setLoadingMessages] = useState<{phase1: string[], phase2: string[], phase3: string[]}>({    phase1: LOADING_MESSAGES_PHASE_1,
     phase2: LOADING_MESSAGES_PHASE_2,
     phase3: LOADING_MESSAGES_PHASE_3
@@ -121,15 +111,13 @@ export default function HomePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: FREE_TIER_TOTAL_ANALYSES });
+  const [uploadLimitData, setUploadLimitData] = useState({ currentCount: 0, maxUploads: 3, resetAt: null as string | null });
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [pendingAnalysis, setPendingAnalysis] = useState<{type: AnalysisType, participants?: string[]} | null>(null);
   const [regeneratedAnalyses, setRegeneratedAnalyses] = useState<Set<string>>(new Set());
-  const [currentAnalysisMode, setCurrentAnalysisMode] = useState<AnalysisDepthMode>('standard');
+  const [currentAnalysisMode, setCurrentAnalysisMode] = useState<AnalysisModelPreference>('fast');
   const [activeGroupParticipants, setActiveGroupParticipants] = useState<string[] | null>(null);
-  const [askTheAuntAnalysisMode, setAskTheAuntAnalysisMode] = useState<AnalysisDepthMode>('standard');
-  const [pendingAnalysisRequest, setPendingAnalysisRequest] = useState<PendingAnalysisRequest | null>(null);
-  const [showPromoCodeModal, setShowPromoCodeModal] = useState(false);
+  const [askTheAuntAnalysisMode, setAskTheAuntAnalysisMode] = useState<AnalysisModelPreference>('fast');
   const [pastedChatText, setPastedChatText] = useState("");
   const [showAskTheAuntModal, setShowAskTheAuntModal] = useState(false);
   const [isAskTheAuntGeneralQuestion, setIsAskTheAuntGeneralQuestion] = useState(false);
@@ -161,7 +149,6 @@ export default function HomePage() {
       setTestAuthEmail(storedEmail);
       setAuthChecking(false);
       setIsAdmin(isAllowedAdminEmail(storedEmail));
-      // Don't set tier - let it stay as 'free' for non-logged-in users
       return;
     }
 
@@ -183,21 +170,9 @@ export default function HomePage() {
           })
           .catch(err => console.error('Error checking admin:', err));
         });
-        
-        // Check user's tier for analysis limits
-        checkUnlimitedAccessAction(user.uid).then(result => {
-          if (result.tier) {
-            // Set tier directly from Firestore (handles free/basic/super/friends + expiry)
-            setSelectedTier(result.tier as UserTier);
-          }
-        }).catch(err => {
-          console.error('Error checking user tier:', err);
-          // Keep default 'free' tier on error
-        });
       } else {
         setTestAuthEmail(getStoredTestAuthEmail());
         setIsAdmin(false);
-        setSelectedTier('free'); // Reset to free tier when logged out
       }
     });
     return () => unsubscribe();
@@ -219,17 +194,6 @@ export default function HomePage() {
   }, [chatData]);
 
   const isAnalyzing = loading;
-
-  const logUpload = async (participantsCount: number, anonymizedText: string, tokenCount: number) => {
-    if (!authUser) return;
-    try {
-      const data = await logUploadAction(authUser.uid, participantsCount, tokenCount);
-      setSessionId(data.sessionId);
-      
-      // Track in Mixpanel
-      trackFileUpload(participantsCount, tokenCount, authUser.uid);
-    } catch (e) { console.error("Log upload failed", e); }
-  };
 
   const logButton = async (buttonId: string) => {
     try {
@@ -270,7 +234,7 @@ export default function HomePage() {
           comment,
           activeAnalysisType || null,
           currentAnalysisMode,
-          selectedTier,
+          null,
           chatCode
         );
         
@@ -331,7 +295,8 @@ export default function HomePage() {
   const syncQuotaFromPayload = (payload: any) => {
     const quotaSource = payload?.quota && typeof payload.quota === 'object' ? payload.quota : payload;
     const currentCount = Number(quotaSource?.currentCount);
-    const maxUploads = Number(quotaSource?.maxUploads);
+    const maxUploads = Number(quotaSource?.maxUploads ?? quotaSource?.maxSubmissions);
+    const resetAt = typeof quotaSource?.resetAt === 'string' ? quotaSource.resetAt : null;
 
     if (!Number.isFinite(currentCount) || !Number.isFinite(maxUploads) || maxUploads <= 0) {
       return;
@@ -340,6 +305,7 @@ export default function HomePage() {
     setUploadLimitData({
       currentCount,
       maxUploads,
+      resetAt,
     });
   };
 
@@ -357,7 +323,7 @@ export default function HomePage() {
       return trimmedMessage;
     }
 
-    return `${trimmedMessage}\n\n${ANALYSIS_FAILURE_QUOTA_MESSAGE}`;
+    return trimmedMessage;
   };
 
   const fetchWithAnalysisTimeout = async (url: string, init: RequestInit): Promise<Response> => {
@@ -377,58 +343,73 @@ export default function HomePage() {
     }
   };
 
-  const ensureAnalysisQuotaAvailable = async (): Promise<boolean> => {
+  const getAuthTokenOrRedirect = async (): Promise<string | null> => {
     if (!authUser) {
-      return true;
+      router.push('/login');
+      return null;
     }
 
-    try {
-      const response = await fetch('/api/track-upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: authUser.uid, action: 'check' })
-      });
+    return authUser.getIdToken();
+  };
 
-      const data = await response.json().catch(() => null);
-      syncQuotaFromPayload(data);
-
-      if (!response.ok) {
-        console.error('Analysis quota check failed:', data);
-        return true;
-      }
-
-      if (!data?.canUpload) {
-        if (selectedTier === 'free') {
-          setShowUpgradeModal(true);
-        } else {
-          alert(data?.error || 'הגעת למכסת הניתוחים שלך כרגע.');
-        }
-
-        return false;
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Error checking analysis quota:', error);
-      return true;
+  const recordSubmissionQuota = async (
+    source: 'primary_upload' | 'pasted_text' | 'ask_aunt_extra',
+    participantsCount?: number,
+    tokenCount?: number
+  ): Promise<any | null> => {
+    const token = await getAuthTokenOrRedirect();
+    if (!token || !authUser) {
+      return null;
     }
+
+    const response = await fetch('/api/track-upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        userId: authUser.uid,
+        action: 'record',
+        source,
+        participantsCount,
+        tokensCount: tokenCount,
+      })
+    });
+
+    const data = await response.json().catch(() => null);
+    syncQuotaFromPayload(data);
+
+    if (!response.ok || data?.accepted === false || data?.quotaExceeded === true) {
+      setShowUpgradeModal(true);
+      return null;
+    }
+
+    if (data?.sessionId) {
+      setSessionId(data.sessionId);
+    }
+
+    return data;
   };
 
   const postAnalysisRequest = async <T = any>(url: string, payload: Record<string, unknown>): Promise<T> => {
+    const token = await getAuthTokenOrRedirect();
+    if (!token) {
+      throw new Error('צריך להתחבר כדי להריץ ניתוח.');
+    }
+
     const response = await fetchWithAnalysisTimeout(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
       body: JSON.stringify(payload)
     });
 
     const responseData = await response.clone().json().catch(() => null);
-    syncQuotaFromPayload(responseData);
 
     if (!response.ok) {
-      if (response.status === 429 && selectedTier === 'free') {
-        setShowUpgradeModal(true);
-      }
-
       throw new Error(
         (typeof responseData?.error === 'string' && responseData.error.trim())
           ? responseData.error.trim()
@@ -591,56 +572,27 @@ export default function HomePage() {
   };
 
   const renderPaidTierBadge = (positionClasses = 'top-4 left-4') => {
-    if (selectedTier !== 'basic' && selectedTier !== 'super' && selectedTier !== 'friends') {
-      return null;
-    }
-
-    const isFriendsTier = selectedTier === 'friends';
-    const isSuperTier = selectedTier === 'super';
-    const badgeLabel = isFriendsTier ? 'Friends User' : isSuperTier ? 'Super User' : 'Basic User';
-    const badgeClasses = isFriendsTier
-      ? 'from-emerald-500 to-teal-500 text-white shadow-emerald-500/30'
-      : isSuperTier
-        ? 'from-amber-500 to-orange-500 text-white shadow-amber-500/30'
-        : 'from-indigo-600 to-violet-600 text-white shadow-indigo-500/30';
-    const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
-
-    return (
-      <div className={`fixed ${positionClasses} z-[60]`}>
-        <div className={`inline-flex items-center gap-2 rounded-full bg-gradient-to-r px-4 py-2 text-sm font-bold shadow-lg ${badgeClasses}`}>
-          <Icon className="w-4 h-4" />
-          <span>{badgeLabel}</span>
-        </div>
-      </div>
-    );
+    return null;
   };
 
-  const isPaidTier = selectedTier === 'basic' || selectedTier === 'super' || selectedTier === 'friends';
   const hasVisibleAuthSession = !!authUser || !!testAuthEmail;
-  const resolveAnalysisMode = (mode?: AnalysisDepthMode): AnalysisDepthMode => {
-    if (!isPaidTier) {
-      return 'standard';
-    }
-
-    return mode === 'deep' ? 'deep' : 'standard';
+  const resolveAnalysisMode = (mode?: AnalysisModelPreference): AnalysisModelPreference => {
+    return 'fast';
   };
 
-  const getAnalysisModeCacheSuffix = (mode?: AnalysisDepthMode): string => {
-    return isPaidTier ? `_${resolveAnalysisMode(mode)}` : '';
+  const getAnalysisModeCacheSuffix = (mode?: AnalysisModelPreference): string => {
+    return `_${resolveAnalysisMode(mode)}`;
   };
 
-  const buildCacheKey = (baseKey: string, mode?: AnalysisDepthMode): string => {
+  const buildCacheKey = (baseKey: string, mode?: AnalysisModelPreference): string => {
     if (!baseKey) return '';
     return `${baseKey}${getAnalysisModeCacheSuffix(mode)}`;
   };
 
-  const buildAnalysisStateKey = (baseKey: string, mode?: AnalysisDepthMode): string => {
+  const buildAnalysisStateKey = (baseKey: string, mode?: AnalysisModelPreference): string => {
     if (!baseKey) return '';
-    return isPaidTier ? `${baseKey}${getAnalysisModeCacheSuffix(mode)}` : baseKey;
+    return `${baseKey}${getAnalysisModeCacheSuffix(mode)}`;
   };
-
-  const hasExhaustedFreeAnalyses =
-    selectedTier === 'free' && uploadLimitData.currentCount >= uploadLimitData.maxUploads;
 
   const hasParticipantAxisSection = (value: unknown): boolean => {
     return (
@@ -668,42 +620,12 @@ export default function HomePage() {
     setShowAskTheAuntModal(true);
   };
 
-  const startAnalysisRequest = async (request: PendingAnalysisRequest, mode: AnalysisDepthMode) => {
-    const resolvedMode = resolveAnalysisMode(mode);
-    setPendingAnalysisRequest(null);
-
-    if (request.kind === 'askAunt') {
-      setAskTheAuntAnalysisMode(resolvedMode);
-      handleOpenAskTheAuntModal(request.mode);
-      return;
-    }
-
-    await runAnalysis(request.type, request.participants, request.bypassCache ?? false, resolvedMode);
-  };
-
-  const queueAnalysisRequest = (request: PendingAnalysisRequest) => {
-    if (!isPaidTier) {
-      void startAnalysisRequest(request, 'standard');
-      return;
-    }
-
-    setPendingAnalysisRequest(request);
-  };
-
-  const handleAnalysisModeSelected = (mode: AnalysisDepthMode) => {
-    if (!pendingAnalysisRequest) return;
-    void startAnalysisRequest(pendingAnalysisRequest, mode);
-  };
-
   const beginAskTheAuntFlow = (mode: 'person' | 'general') => {
     if (!requireAuth()) return;
-    if (hasExhaustedFreeAnalyses) {
-      setShowUpgradeModal(true);
-      return;
-    }
 
     void logButton('ASK_AUNT_INIT');
-    queueAnalysisRequest({ kind: 'askAunt', mode });
+    setAskTheAuntAnalysisMode('fast');
+    handleOpenAskTheAuntModal(mode);
   };
 
   const handleCloseAskTheAuntModal = () => {
@@ -800,11 +722,6 @@ export default function HomePage() {
       return;
     }
 
-    const canRunAnalysis = await ensureAnalysisQuotaAvailable();
-    if (!canRunAnalysis) {
-      return;
-    }
-
     setAskTheAuntError(null);
     setIsAskTheAuntSubmitting(true);
     if (authUser) {
@@ -818,6 +735,13 @@ export default function HomePage() {
         for (const file of askTheAuntExtraFiles) {
           const fileText = await readChatUploadFile(file, MAX_FILE_SIZE_BYTES);
           const parsedChat = await parseChatFile(fileText);
+          if (!parsedChat || parsedChat.messages.length === 0) {
+            throw new Error(`הקובץ "${file.name}" לא הכיל הודעות שאפשר לנתח.`);
+          }
+          const quotaResult = await recordSubmissionQuota('ask_aunt_extra');
+          if (!quotaResult) {
+            throw new Error('הגעת למכסת ההעלאות שלך כרגע. נסו שוב אחרי שתתפנה העלאה חדשה.');
+          }
           extraParsedChats.push(parsedChat);
         }
       }
@@ -837,10 +761,7 @@ export default function HomePage() {
         chatSections: askContext.chatSections,
         targetUser: askContext.targetUser,
         question: trimmedQuestion,
-        tier: selectedTier,
-        analysisMode: requestedAnalysisMode,
         userId: authUser?.uid || null,
-        userEmail: visibleEmail,
         sessionId,
         questionMode: isAskTheAuntGeneralQuestion ? 'general' : 'person'
       });
@@ -885,7 +806,7 @@ export default function HomePage() {
     type: AnalysisType,
     participants?: string[],
     bypassCache: boolean = false,
-    requestedAnalysisMode: AnalysisDepthMode = 'standard'
+    requestedAnalysisMode: AnalysisModelPreference = 'fast'
   ) => {
     logButton(type);
 
@@ -897,59 +818,14 @@ export default function HomePage() {
     await executeAnalysis(type, participants, bypassCache, requestedAnalysisMode);
   };
 
-  const handleOpenPromoCodeModal = () => {
-    setShowPromoCodeModal(true);
-  };
-
   const handleLogOut = async () => {
     clearLoadedChat();
     await logOut();
     router.push('/');
   };
 
-  const refreshUserTier = async () => {
-    if (!authUser) return;
-    
-    try {
-      const result = await checkUnlimitedAccessAction(authUser.uid);
-      if (result.hasUnlimited) {
-        setSelectedTier('super');
-      } else if (result.tier) {
-        setSelectedTier(result.tier as UserTier);
-      }
-    } catch (err) {
-      console.error('Error refreshing user tier:', err);
-    }
-  };
-
-  const handleUpgrade = async (tier: 'basic' | 'super') => {
-    if (!authUser) return;
-    
-    const tierNames = {
-      basic: 'מנוי בסיסי (10 ניתוחים ביום)',
-      super: 'מנוי-על (50 ניתוחים ביום)'
-    };
-    
-    try {
-      const response = await fetch('/api/reset-limit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: authUser.uid, tier })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setShowUpgradeModal(false);
-        alert(`מעולה! שודרגת ל${tierNames[tier]}! המגבלה אופסה ואתה יכול להמשיך לנתח צ׳אטים! 🎉`);
-        // Trigger file upload again if needed
-      } else {
-        alert('אירעה שגיאה. נסה שוב.');
-      }
-    } catch (error) {
-      console.error('Upgrade error:', error);
-      alert('אירעה שגיאה בשדרוג.');
-    }
+  const handleUpgrade = async (_tier: 'basic' | 'super') => {
+    setShowUpgradeModal(false);
   };
 
   const storeChat = async (_text: string) => {
@@ -958,8 +834,9 @@ export default function HomePage() {
     return null;
   };
 
-  const handleFileLoaded = async (text: string) => {
-    // Uploading a file never burns analysis quota. Quota is checked only when a real analysis starts.
+  const handleFileLoaded = async (text: string, source: 'primary_upload' | 'pasted_text' = 'primary_upload') => {
+    if (!requireAuth()) return;
+
     setRegeneratedAnalyses(new Set());
     setIsProcessingFile(true);
     setProcessingProgress(0);
@@ -1008,10 +885,15 @@ export default function HomePage() {
       // Calculate token count based on character count / 4
       const estimatedTokens = Math.ceil(formattedAnonymizedText.length / 4);
 
-      // Store chat and log upload only for authenticated users
+      const quotaResult = await recordSubmissionQuota(source, parsed.participants.length, estimatedTokens);
+      if (!quotaResult) {
+        clearLoadedChat();
+        return;
+      }
+
       if (authUser) {
         await storeChat(formattedAnonymizedText);
-        await logUpload(parsed.participants.length, formattedAnonymizedText, estimatedTokens);
+        trackFileUpload(parsed.participants.length, estimatedTokens, authUser.uid);
       }
 
       const deanonymize = (t: any): string => {
@@ -1029,8 +911,12 @@ export default function HomePage() {
         return txt;
       };
 
-      const metadata = await getChatMetadata(parsed.loadingPreviewMessages);
-      if (metadata.highlights) setHighlights(metadata.highlights.map(deanonymize));
+      try {
+        const metadata = await getChatMetadata(parsed.loadingPreviewMessages);
+        if (metadata.highlights) setHighlights(metadata.highlights.map(deanonymize));
+      } catch (metadataError) {
+        console.warn('Failed to prepare chat highlights after parsing:', metadataError);
+      }
 
       setChatData(parsed);
       setSelectedUser(null);
@@ -1055,13 +941,15 @@ export default function HomePage() {
   };
 
   const handlePastedTextSubmit = async () => {
+    if (!requireAuth()) return;
+
     const normalizedText = pastedChatText.trim();
     if (!normalizedText) {
       alert("הדביקו כאן טקסט של צ'אט כדי להתחיל בניתוח.");
       return;
     }
 
-    await handleFileLoaded(normalizedText);
+    await handleFileLoaded(normalizedText, 'pasted_text');
   };
 
   const focusPasteInput = () => {
@@ -1078,16 +966,16 @@ export default function HomePage() {
   };
 
   // Helper to check if cache exists for this analysis
-  const getCacheKey = (type: AnalysisType, participants?: string[], mode: AnalysisDepthMode = currentAnalysisMode): string => {
+  const getCacheKey = (type: AnalysisType, participants?: string[], mode: AnalysisModelPreference = currentAnalysisMode): string => {
     if (type === AnalysisType.GROUP_DYNAMICS) {
-      return buildCacheKey(createGroupDynamicsCacheKey(participants, selectedTier), mode);
+      return buildCacheKey(createGroupDynamicsCacheKey(participants), mode);
     }
     if (type === AnalysisType.ROMANTIC_DYNAMICS) {
-      return buildCacheKey(createRomanticDynamicsCacheKey(selectedTier), mode);
+      return buildCacheKey(createRomanticDynamicsCacheKey(), mode);
     }
     if (selectedUser && chatData) {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
-      return buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier), mode);
+      return buildCacheKey(createFullAnalysisCacheKey(anonUser), mode);
     }
     return '';
   };
@@ -1097,7 +985,7 @@ export default function HomePage() {
     type: AnalysisType,
     participants?: string[],
     bypassCache: boolean = false,
-    requestedAnalysisMode: AnalysisDepthMode = currentAnalysisMode
+    requestedAnalysisMode: AnalysisModelPreference = currentAnalysisMode
   ) => {
     if (!chatData) return;
     const resolvedMode = resolveAnalysisMode(requestedAnalysisMode);
@@ -1117,7 +1005,7 @@ export default function HomePage() {
         setActiveGroupParticipants(selectedGroupParticipants || null);
         
         // Check cache for group dynamics
-        const cacheKey = buildCacheKey(createGroupDynamicsCacheKey(selectedGroupParticipants, selectedTier), resolvedMode);
+        const cacheKey = buildCacheKey(createGroupDynamicsCacheKey(selectedGroupParticipants), resolvedMode);
         const groupStateKey = buildAnalysisStateKey('GROUP', resolvedMode);
         
         let result = "";
@@ -1132,20 +1020,11 @@ export default function HomePage() {
             strategy = cachedOutputs[cacheKey].strategy;
             originalWordCount = cachedOutputs[cacheKey].originalWordCount;
         } else {
-            const canRunAnalysis = await ensureAnalysisQuotaAvailable();
-            if (!canRunAnalysis) {
-              setActiveAnalysisType(null);
-              return;
-            }
-
             const analysisResult = await postAnalysisRequest('/api/analyze-group-dynamics', {
               messages: chatData.anonymizedMessages,
               selectedParticipants: anonymizedSelectedParticipants,
               limit,
-              tier: selectedTier,
-              analysisMode: resolvedMode,
               userId: authUser?.uid || null,
-              userEmail: visibleEmail,
               sessionId
             });
 
@@ -1200,25 +1079,16 @@ export default function HomePage() {
         const limit = Infinity;
         
         // Check cache
-        const cacheKey = buildCacheKey(createRomanticDynamicsCacheKey(selectedTier), resolvedMode);
+        const cacheKey = buildCacheKey(createRomanticDynamicsCacheKey(), resolvedMode);
         const romanticStateKey = buildAnalysisStateKey('ROMANTIC', resolvedMode);
         let result = "";
         if (!bypassCache && cachedOutputs[cacheKey]) {
             result = cachedOutputs[cacheKey].output;
         } else {
-            const canRunAnalysis = await ensureAnalysisQuotaAvailable();
-            if (!canRunAnalysis) {
-              setActiveAnalysisType(null);
-              return;
-            }
-
             const responseData = await postAnalysisRequest('/api/analyze-romantic-dynamics', {
               messages: chatData.anonymizedMessages,
               limit,
-              tier: selectedTier,
-              analysisMode: resolvedMode,
               userId: authUser?.uid || null,
-              userEmail: visibleEmail,
               sessionId
             });
 
@@ -1278,7 +1148,7 @@ export default function HomePage() {
       const anonUser = chatData.nameMap[selectedUser] || selectedUser;
       
       // Check cache for full analysis
-      const cacheKey = buildCacheKey(createFullAnalysisCacheKey(anonUser, selectedTier), resolvedMode);
+      const cacheKey = buildCacheKey(createFullAnalysisCacheKey(anonUser), resolvedMode);
       let rawResult: any = {};
       let strategy: 'full' | 'sampled' | undefined;
       let originalWordCount: number | undefined;
@@ -1288,20 +1158,11 @@ export default function HomePage() {
           strategy = cachedOutputs[cacheKey].strategy;
           originalWordCount = cachedOutputs[cacheKey].originalWordCount;
       } else {
-          const canRunAnalysis = await ensureAnalysisQuotaAvailable();
-          if (!canRunAnalysis) {
-            setActiveAnalysisType(null);
-            return;
-          }
-
           const analysisResult = await postAnalysisRequest('/api/analyze-chat-full', {
             messages: chatData.anonymizedMessages,
             targetUser: anonUser,
             limit,
-            tier: selectedTier,
-            analysisMode: resolvedMode,
             userId: authUser?.uid || null,
-            userEmail: visibleEmail,
             sessionId
           });
 
@@ -1378,17 +1239,12 @@ export default function HomePage() {
     if (!chatData) return;
     if (!requireAuth()) return;
 
-    if (hasExhaustedFreeAnalyses) {
-      setShowUpgradeModal(true);
-      return;
-    }
-
     if (type === AnalysisType.ASK_AUNT) {
       beginAskTheAuntFlow('person');
       return;
     }
 
-    queueAnalysisRequest({ kind: 'analysis', type, participants, bypassCache });
+    void runAnalysis(type, participants, bypassCache, 'fast');
   };
 
   const handleUseExistingAnalysis = () => {
@@ -1434,8 +1290,7 @@ export default function HomePage() {
         });
       }
       
-      // Now execute analysis with cache bypass
-      runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, true, currentAnalysisMode);
+      void runAnalysis(pendingAnalysis.type, pendingAnalysis.participants, true, 'fast');
     }
     setShowRegenerateConfirm(false);
     setPendingAnalysis(null);
@@ -1531,18 +1386,6 @@ export default function HomePage() {
                   <Shield className="w-3.5 h-3.5" /><span>Admin</span>
                 </button>
               )}
-              {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
-                const isFriendsTier = selectedTier === 'friends';
-                const isSuperTier = selectedTier === 'super';
-                const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
-                const bg = isFriendsTier ? 'from-emerald-500 to-teal-500' : isSuperTier ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-violet-600';
-                const label = isFriendsTier ? 'חברים' : isSuperTier ? 'סופר' : 'בסיסי';
-                return (
-                  <span className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${bg} px-2.5 py-1 text-xs font-bold text-white shadow`}>
-                    <Icon className="w-3 h-3" />{label}
-                  </span>
-                );
-              })()}
             </div>
             {/* Right: actions */}
             <div className="flex items-center gap-2">
@@ -1556,10 +1399,6 @@ export default function HomePage() {
                     <UserCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                     <span className="text-xs text-slate-600 max-w-[130px] truncate">{visibleEmail}</span>
                   </div>
-                  <button onClick={handleOpenPromoCodeModal} type="button" title="קוד חברים"
-                    className="p-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-white rounded-xl shadow cursor-pointer transition-all">
-                    <Gift className="w-3.5 h-3.5" />
-                  </button>
                   <button onClick={() => router.push('/profile')} title="הפרופיל שלי"
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow cursor-pointer transition-all">
                     <User className="w-3.5 h-3.5" /><span className="hidden sm:inline">הפרופיל שלי</span>
@@ -1601,6 +1440,7 @@ export default function HomePage() {
           onUpgrade={handleUpgrade}
           currentCount={uploadLimitData.currentCount}
           maxUploads={uploadLimitData.maxUploads}
+          resetAt={uploadLimitData.resetAt}
           userId={authUser?.uid}
         />
 
@@ -1634,18 +1474,6 @@ export default function HomePage() {
                   <Shield className="w-3.5 h-3.5" /><span>Admin</span>
                 </button>
               )}
-              {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
-                const isFriendsTier = selectedTier === 'friends';
-                const isSuperTier = selectedTier === 'super';
-                const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
-                const bg = isFriendsTier ? 'from-emerald-500 to-teal-500' : isSuperTier ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-violet-600';
-                const label = isFriendsTier ? 'חברים' : isSuperTier ? 'סופר' : 'בסיסי';
-                return (
-                  <span className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${bg} px-2.5 py-1 text-xs font-bold text-white shadow`}>
-                    <Icon className="w-3 h-3" />{label}
-                  </span>
-                );
-              })()}
             </div>
             {/* Right: actions */}
             <div className="flex items-center gap-2">
@@ -1659,10 +1487,6 @@ export default function HomePage() {
                     <UserCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                     <span className="text-xs text-slate-600 max-w-[130px] truncate">{visibleEmail}</span>
                   </div>
-                  <button onClick={handleOpenPromoCodeModal} type="button" title="קוד חברים"
-                    className="p-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-white rounded-xl shadow cursor-pointer transition-all">
-                    <Gift className="w-3.5 h-3.5" />
-                  </button>
                   <button onClick={() => router.push('/profile')} title="הפרופיל שלי"
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow cursor-pointer transition-all">
                     <User className="w-3.5 h-3.5" /><span className="hidden sm:inline">הפרופיל שלי</span>
@@ -1698,7 +1522,11 @@ export default function HomePage() {
               <div className="max-w-6xl mx-auto bg-white/80 backdrop-blur-sm p-6 rounded-3xl shadow-xl border border-white/50 transform hover:scale-[1.02] transition-transform duration-300">
                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-stretch">
                     <div className="h-full">
-                      <FileUpload onFileLoaded={handleFileLoaded} />
+                      <FileUpload
+                        onFileLoaded={handleFileLoaded}
+                        canUpload={hasVisibleAuthSession}
+                        onAuthRequired={() => router.push('/login')}
+                      />
                     </div>
 
                     <div className="flex flex-col justify-between rounded-3xl border border-teal-100 bg-gradient-to-br from-white via-teal-50/70 to-cyan-50/80 p-5 shadow-sm">
@@ -1895,146 +1723,13 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Pricing Section */}
-        <div className="bg-gradient-to-br from-slate-50 to-indigo-50 py-20 border-t border-slate-100">
-            <div className="max-w-5xl mx-auto px-4">
-                <div className="text-center mb-16">
-                    <h2 className="text-4xl md:text-5xl font-black text-slate-900 mb-4">תוכניות מנוי</h2>
-                    <p className="text-xl text-slate-600">בחר את התוכנית המתאימה לך</p>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8" dir="rtl">
-                    {/* Free Tier */}
-                    <div className="bg-white rounded-3xl p-8 shadow-lg hover:shadow-xl transition-all">
-                        <div className="text-center mb-6">
-                            <div className="inline-flex items-center justify-center w-16 h-16 bg-slate-100 rounded-2xl mb-4">
-                                <AlertCircle className="w-8 h-8 text-slate-600" />
-                            </div>
-                            <h3 className="text-2xl font-black text-slate-800 mb-2">חינם</h3>
-                            <div className="text-4xl font-black text-slate-900 mb-2">$0</div>
-                            <p className="text-sm text-slate-500">לתמיד</p>
-                        </div>
-                        <ul className="space-y-3 mb-8">
-                            <li className="flex items-center gap-2 text-slate-700">
-                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                                <span>3 ניתוחים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-slate-700">
-                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                                <span>ניתוחים בסיסיים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-slate-700">
-                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                                <span>שאילת שאלות על שיחות ווטסאפ</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-slate-700">
-                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                                <span>העלאת יותר משיחה אחת כדי להצליב עמדות ודעות על אנשים מסוימים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-slate-700">
-                                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-                                <span>ניתוח דינמיקות קבוצתיות</span>
-                            </li>
-                        </ul>
-                        <button className="w-full py-3 rounded-xl bg-slate-200 text-slate-600 font-bold cursor-not-allowed">
-                            התוכנית הנוכחית
-                        </button>
-                    </div>
-
-                    {/* Basic Tier */}
-                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-3xl p-8 shadow-lg hover:shadow-xl transition-all border-2 border-blue-200">
-                        <div className="text-center mb-6">
-                            <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-500 rounded-2xl mb-4">
-                                <TrendingUp className="w-8 h-8 text-white" />
-                            </div>
-                            <h3 className="text-2xl font-black text-blue-900 mb-2">מנוי בסיסי</h3>
-                            <div className="text-4xl font-black text-blue-900 mb-2">$5</div>
-                            <p className="text-sm text-blue-700">לחודש</p>
-                        </div>
-                        <ul className="space-y-3 mb-8">
-                            <li className="flex items-center gap-2 text-blue-900">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span className="font-bold">10 ניתוחים שבועיים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-blue-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-blue-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>שאילת שאלות על שיחות ווטסאפ</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-blue-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>העלאת יותר משיחה אחת כדי להצליב עמדות ודעות על אנשים מסוימים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-blue-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>ניתוח דינמיקות קבוצתיות</span>
-                            </li>
-                        </ul>
-                        <button 
-                            onClick={() => authUser ? router.push('/profile') : router.push('/signup')}
-                            className="w-full py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all cursor-pointer"
-                        >
-                            התחל עכשיו
-                        </button>
-                    </div>
-
-                    {/* Super Tier */}
-                    <div className="bg-gradient-to-br from-purple-50 to-pink-100 rounded-3xl p-8 shadow-xl hover:shadow-2xl transition-all border-2 border-purple-300 relative">
-                        <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-sm font-bold px-4 py-1.5 rounded-full shadow-lg">
-                            הכי פופולרי ⭐
-                        </div>
-                        <div className="text-center mb-6 mt-2">
-                            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl mb-4">
-                                <Crown className="w-8 h-8 text-white" />
-                            </div>
-                            <h3 className="text-2xl font-black text-purple-900 mb-2">מנוי-על</h3>
-                            <div className="text-4xl font-black text-purple-900 mb-2">$30</div>
-                            <p className="text-sm text-purple-700">לחודש</p>
-                        </div>
-                        <ul className="space-y-3 mb-8">
-                            <li className="flex items-center gap-2 text-purple-900">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span className="font-bold">50 ניתוחים שבועיים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-purple-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>גישה מוקדמת לפיצ'רים נוספים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-purple-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>ניתוחים מעמיקים על פני תקופות זמן ארוכות יותר</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-purple-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>שאילת שאלות על שיחות ווטסאפ</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-purple-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>העלאת יותר משיחה אחת כדי להצליב עמדות ודעות על אנשים מסוימים</span>
-                            </li>
-                            <li className="flex items-center gap-2 text-purple-800">
-                                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                                <span>ניתוח דינמיקות קבוצתיות</span>
-                            </li>
-                        </ul>
-                        <button 
-                            onClick={() => authUser ? router.push('/profile') : router.push('/signup')}
-                            className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold hover:from-purple-700 hover:to-pink-700 transition-all cursor-pointer shadow-lg"
-                        >
-                            התחל עכשיו
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         {/* Reviews Section */}
         <div className="bg-white py-20 border-t border-slate-100">
             <div className="max-w-5xl mx-auto px-4">
-                <h2 className="text-3xl font-black text-center text-slate-800 mb-16">מה המשתמשים אומרים?</h2>
+                <div className="mb-16 text-center">
+                    <h2 className="text-3xl font-black text-slate-800">מה המשתמשים אומרים?</h2>
+                    <p className="mt-3 text-sm font-semibold text-slate-500">(המגיבים מזויפים, הסנטימנטים אמיתיים)</p>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div className="bg-teal-50/50 p-8 rounded-3xl relative border border-teal-100/50">
                         <Quote className="absolute top-6 right-6 w-8 h-8 text-teal-200" />
@@ -2121,6 +1816,7 @@ export default function HomePage() {
           onUpgrade={handleUpgrade}
           currentCount={uploadLimitData.currentCount}
           maxUploads={uploadLimitData.maxUploads}
+          resetAt={uploadLimitData.resetAt}
           userId={authUser?.uid}
         />
 
@@ -2131,21 +1827,6 @@ export default function HomePage() {
           onGenerateNew={handleGenerateNewAnalysis}
         />
 
-        {authUser && (
-          <PromoCodeModal
-            isOpen={showPromoCodeModal}
-            onClose={() => {
-              setShowPromoCodeModal(false);
-            }}
-            userId={authUser.uid}
-            onSuccess={async () => {
-              setShowPromoCodeModal(false);
-              // Refresh user tier immediately
-              await refreshUserTier();
-              alert('✅ הקוד הופעל! עכשיו אתה יכול לנתח את כל ההיסטוריה של השיחות שלך.');
-            }}
-          />
-        )}
       </div>
     );
   }
@@ -2170,18 +1851,6 @@ export default function HomePage() {
                 <Shield className="w-3.5 h-3.5" /><span>Admin</span>
               </button>
             )}
-            {hasVisibleAuthSession && !isAdmin && selectedTier !== 'free' && (() => {
-              const isFriendsTier = selectedTier === 'friends';
-              const isSuperTier = selectedTier === 'super';
-              const Icon = isFriendsTier ? Gift : isSuperTier ? Star : Zap;
-              const bg = isFriendsTier ? 'from-emerald-500 to-teal-500' : isSuperTier ? 'from-amber-500 to-orange-500' : 'from-indigo-600 to-violet-600';
-              const label = isFriendsTier ? 'חברים' : isSuperTier ? 'סופר' : 'בסיסי';
-              return (
-                <span className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${bg} px-2.5 py-1 text-xs font-bold text-white shadow`}>
-                  <Icon className="w-3 h-3" />{label}
-                </span>
-              );
-            })()}
           </div>
           {/* Right: actions */}
           <div className="flex items-center gap-2">
@@ -2206,10 +1875,6 @@ export default function HomePage() {
                   <UserCircle2 className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                   <span className="text-xs text-slate-600 max-w-[130px] truncate">{visibleEmail}</span>
                 </div>
-                <button onClick={handleOpenPromoCodeModal} type="button" title="קוד חברים"
-                  className="p-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-white rounded-xl shadow cursor-pointer transition-all">
-                  <Gift className="w-3.5 h-3.5" />
-                </button>
                 <button onClick={() => router.push('/profile')} title="הפרופיל שלי"
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow cursor-pointer transition-all">
                   <User className="w-3.5 h-3.5" /><span className="hidden sm:inline">הפרופיל שלי</span>
@@ -2382,12 +2047,6 @@ export default function HomePage() {
         />
       )}
 
-      <AnalysisSpeedModal
-        isOpen={!!pendingAnalysisRequest}
-        onClose={() => setPendingAnalysisRequest(null)}
-        onSelect={handleAnalysisModeSelected}
-      />
-
       <AskTheAuntModal
         isOpen={showAskTheAuntModal}
         mode={isAskTheAuntGeneralQuestion ? 'general' : 'person'}
@@ -2413,6 +2072,7 @@ export default function HomePage() {
         onUpgrade={handleUpgrade}
         currentCount={uploadLimitData.currentCount}
         maxUploads={uploadLimitData.maxUploads}
+        resetAt={uploadLimitData.resetAt}
         userId={authUser?.uid}
       />
 
@@ -2423,21 +2083,6 @@ export default function HomePage() {
         onGenerateNew={handleGenerateNewAnalysis}
       />
 
-      {authUser && (
-        <PromoCodeModal
-          isOpen={showPromoCodeModal}
-          onClose={() => {
-            setShowPromoCodeModal(false);
-          }}
-          userId={authUser.uid}
-          onSuccess={async () => {
-            setShowPromoCodeModal(false);
-            // Refresh user tier immediately
-            await refreshUserTier();
-            alert('✅ הקוד הופעל! עכשיו אתה יכול לנתח את כל ההיסטוריה של השיחות שלך.');
-          }}
-        />
-      )}
 
 
 

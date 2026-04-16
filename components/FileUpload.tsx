@@ -6,14 +6,21 @@ import { readChatUploadFile } from '@/lib/chat-file-utils';
 
 interface FileUploadProps {
   onFileLoaded: (content: string) => void;
+  canUpload?: boolean;
+  onAuthRequired?: () => void;
 }
 
-export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded }) => {
+export const FileUpload: React.FC<FileUploadProps> = ({ onFileLoaded, canUpload = true, onAuthRequired }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const processFile = async (file: File) => {
+    if (!canUpload) {
+      onAuthRequired?.();
+      return;
+    }
+
     setIsLoading(true);
     try {
       const content = await readChatUploadFile(file, MAX_FILE_SIZE_BYTES);

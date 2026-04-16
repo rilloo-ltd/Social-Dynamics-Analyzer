@@ -28,17 +28,14 @@ import {
 } from '@/types';
 import {
   activatePromptDraft,
-  createGlobalReferralCode,
   deactivatePromptDraft,
   discardPromptDraft,
   estimateGeminiCostUsd,
   getAdminDb,
   getAllPrompts,
   getPromptData,
-  resetDailyUploadLimit,
   savePromptDraft,
   updateProductionPrompt,
-  updateUserTier,
 } from './firestore-admin';
 import { logger } from './logger';
 import { getPrompt, getPromptKeys, PROMPT_METADATA, type PromptKey } from './prompts';
@@ -1344,26 +1341,28 @@ export async function getAdminDashboardSnapshot(filters?: AdminDashboardFilters)
 }
 
 export async function resetAdminUserUploadLimit(userId: string) {
-  return resetDailyUploadLimit(userId);
+  return {
+    success: false,
+    userId,
+    message: 'Upload-limit resets are disabled. Capacity returns on a rolling 24-hour window.',
+  };
 }
 
 export async function updateAdminUserTier(userId: string, tier: UserTier) {
-  const maxDailyUploads = tier === 'super' ? 50 : tier === 'basic' ? 10 : 3;
-  return updateUserTier(userId, tier, maxDailyUploads);
+  return {
+    success: false,
+    userId,
+    tier,
+    message: 'Tier updates are disabled. All users share the same rolling quota.',
+  };
 }
 
 export async function generateAdminReferralCode(userId: string, userName: string, code?: string, uses = 3) {
-  const generatedCode = (code || `REF-${Math.random().toString(36).slice(2, 8)}`).toUpperCase();
-  await createGlobalReferralCode(userId, userName, generatedCode, uses);
-  return generatedCode;
+  throw new Error('Referral-code generation is disabled.');
 }
 
 export async function generateAdminCreditCode(credits: number = 2) {
-  const suffix = Math.random().toString(36).slice(2, 9).toUpperCase();
-  const generatedCode = `CREDIT-${suffix}`;
-  const { createCreditCode } = await import('@/lib/firestore-admin');
-  await createCreditCode(generatedCode, credits);
-  return generatedCode;
+  throw new Error('Credit-code generation is disabled.');
 }
 
 export async function reconcileAdminSubscription(userId: string) {
@@ -1379,20 +1378,10 @@ export async function reconcileAdminSubscription(userId: string) {
   const subscriptionStatus = safeString(userData.subscriptionStatus);
   const tier = normalizeTier(userData.tier);
 
-  if (!subscriptionStatus || subscriptionStatus === 'ACTIVE') {
-    const resolvedMaxDailyUploads = tier === 'super' ? 50 : tier === 'basic' ? 10 : 3;
-    await userRef.set({
-      maxDailyUploads: resolvedMaxDailyUploads,
-      reconciledAt: new Date().toISOString(),
-    }, { merge: true });
-    return { tier, subscriptionStatus: subscriptionStatus || 'UNKNOWN', maxDailyUploads: resolvedMaxDailyUploads };
-  }
-
-  await userRef.set({
-    tier: 'free',
+  return {
+    tier,
+    subscriptionStatus: subscriptionStatus || 'UNKNOWN',
     maxDailyUploads: 3,
-    reconciledAt: new Date().toISOString(),
-  }, { merge: true });
-
-  return { tier: 'free', subscriptionStatus, maxDailyUploads: 3 };
+    readOnly: true,
+  };
 }

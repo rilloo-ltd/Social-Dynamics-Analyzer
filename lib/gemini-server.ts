@@ -5,25 +5,21 @@ import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { GoogleGenAI, Type } from "@google/genai";
 import {
-  AnalysisDepthMode,
+  AnalysisModelPreference,
   ChatMessage,
   ChatRecordSection,
   ChunkingStrategy,
   ParticipantAxisDistributionSummary,
   ParticipantAxisKey,
-  ParticipantAxisScore,
-  UserTier
+  ParticipantAxisScore
 } from "@/types";
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { PredictionServiceClient, helpers } from '@google-cloud/aiplatform';
 import { logger } from './logger';
 import {
   createGroupAnalysisChunks,
-  createGroupAnalysisChunksByTokens,
   createIndividualAnalysisChunks,
-  createIndividualAnalysisChunksByTokens,
   formatChatDate,
-  getTotalTokenCount,
   getTotalWordCount
 } from './chat-utils';
 import { normalizeGeneratedText } from './analysis-text';
@@ -36,13 +32,10 @@ import {
   recordParticipantAxisScores
 } from './firestore-admin';
 
-// Analysis model configuration by tier.
-// Google documents the Pro preview model ID as "gemini-3-pro-preview".
-const FREE_ANALYSIS_MODEL = "gemini-3-flash-preview";
-const PAID_ANALYSIS_MODEL = "gemini-3-pro-preview";
-const UTILITY_GEMINI_MODEL = FREE_ANALYSIS_MODEL;
-const FREE_ANALYSIS_MAX_WORDS = 50000;
-const PAID_ANALYSIS_MAX_TOKENS = 200000;
+// Analysis model configuration by user choice.
+const FAST_ANALYSIS_MODEL = "gemini-3-flash-preview";
+const UTILITY_GEMINI_MODEL = FAST_ANALYSIS_MODEL;
+const SHARED_ANALYSIS_MAX_WORDS = 50000;
 const ASK_AUNT_MAX_WORDS = 50000;
 const ASK_AUNT_MAX_QUESTION_CHARS = 500;
 
@@ -356,28 +349,18 @@ const parseStructuredJsonObject = (rawText: string): Record<string, any> | null 
   return null;
 };
 
-type AnalysisBudget =
-  | { metric: 'words'; max: number }
-  | { metric: 'tokens'; max: number };
+type AnalysisBudget = { metric: 'words'; max: number };
 
-const getAnalysisBudget = (tier?: UserTier | string): AnalysisBudget => {
-  if (tier === 'basic' || tier === 'super' || tier === 'advanced') {
-    return { metric: 'tokens', max: PAID_ANALYSIS_MAX_TOKENS };
-  }
-
-  return { metric: 'words', max: FREE_ANALYSIS_MAX_WORDS };
+const normalizeModelPreference = (modelPreference?: AnalysisModelPreference | string): AnalysisModelPreference => {
+  return 'fast';
 };
 
-const getAnalysisModel = (tier?: UserTier | string, analysisMode?: AnalysisDepthMode): string => {
-  if (tier === 'free') {
-    return FREE_ANALYSIS_MODEL;
-  }
+const getAnalysisBudget = (): AnalysisBudget => {
+  return { metric: 'words', max: SHARED_ANALYSIS_MAX_WORDS };
+};
 
-  if (analysisMode === 'deep' && (tier === 'basic' || tier === 'super' || tier === 'advanced')) {
-    return PAID_ANALYSIS_MODEL;
-  }
-
-  return FREE_ANALYSIS_MODEL;
+const getAnalysisModel = (modelPreference?: AnalysisModelPreference | string): string => {
+  return FAST_ANALYSIS_MODEL;
 };
 
 const sanitizeUserQuestion = (question: string): string => {
@@ -659,8 +642,7 @@ export async function serverAnalyzeChatFull(
   messages: ChatMessage[],
   targetUser: string,
   limit: number,
-  tier: UserTier = 'free',
-  analysisMode?: AnalysisDepthMode,
+  modelPreference: AnalysisModelPreference = 'fast',
   telemetryContext?: GeminiTelemetryContext
 ): Promise<{
   personality: string;
@@ -674,31 +656,20 @@ export async function serverAnalyzeChatFull(
   telemetry?: GeminiCallTelemetry;
 }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
-  const budget = getAnalysisBudget(tier);
-  const model = getAnalysisModel(tier, analysisMode);
-  const chunkResult = budget.metric === 'tokens'
-    ? createIndividualAnalysisChunksByTokens(messages, targetUser, budget.max)
-    : createIndividualAnalysisChunks(messages, targetUser, budget.max);
+  const budget = getAnalysisBudget();
+  const model = getAnalysisModel(modelPreference);
+  const chunkResult = createIndividualAnalysisChunks(messages, targetUser, budget.max);
   const chunkedMessages = chunkResult.chunks;
   const strategy = chunkResult.strategy;
   const originalWordCount = 'originalWordCount' in chunkResult ? chunkResult.originalWordCount : undefined;
-  const originalTokenCount = 'originalTokenCount' in chunkResult ? chunkResult.originalTokenCount : undefined;
+  const originalTokenCount = undefined;
   
   // Verification logging (user requirement)
-  if (budget.metric === 'tokens' && originalTokenCount && originalTokenCount > budget.max) {
-    const finalTokenCount = getTotalTokenCount(chunkedMessages);
-    const reduction = ((originalTokenCount - finalTokenCount) / originalTokenCount * 100).toFixed(1);
-    console.log('[Individual Analysis Verification]');
-    console.log(`  Tier: ${tier}`);
-    console.log(`  Original: ${originalTokenCount} tokens`);
-    console.log(`  Final: ${finalTokenCount} tokens`);
-    console.log(`  Reduction: ${reduction}%`);
-    console.log(`  Still over 200k? ${finalTokenCount > budget.max ? 'YES' : 'NO'}`);
-  } else if (budget.metric === 'words' && originalWordCount && originalWordCount > budget.max) {
+  if (originalWordCount && originalWordCount > budget.max) {
     const finalWordCount = getTotalWordCount(chunkedMessages);
     const reduction = ((originalWordCount - finalWordCount) / originalWordCount * 100).toFixed(1);
     console.log('[Individual Analysis Verification]');
-    console.log(`  Tier: ${tier}`);
+    console.log(`  Model preference: ${normalizeModelPreference(modelPreference)}`);
     console.log(`  Original: ${originalWordCount} words`);
     console.log(`  Final: ${finalWordCount} words`);
     console.log(`  Reduction: ${reduction}%`);
@@ -805,20 +776,17 @@ export async function serverAnalyzeGroupDynamics(
   messages: ChatMessage[],
   selectedParticipants: string[] | undefined,
   limit: number,
-  tier: UserTier = 'free',
-  analysisMode?: AnalysisDepthMode,
+  modelPreference: AnalysisModelPreference = 'fast',
   telemetryContext?: GeminiTelemetryContext
 ): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number; telemetry?: GeminiCallTelemetry }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
-  const budget = getAnalysisBudget(tier);
-  const model = getAnalysisModel(tier, analysisMode);
-  const chunkResult = budget.metric === 'tokens'
-    ? createGroupAnalysisChunksByTokens(messages, budget.max)
-    : createGroupAnalysisChunks(messages, budget.max);
+  const budget = getAnalysisBudget();
+  const model = getAnalysisModel(modelPreference);
+  const chunkResult = createGroupAnalysisChunks(messages, budget.max);
   const chunkedMessages = chunkResult.chunks;
   const strategy = chunkResult.strategy;
   const originalWordCount = 'originalWordCount' in chunkResult ? chunkResult.originalWordCount : undefined;
-  const originalTokenCount = 'originalTokenCount' in chunkResult ? chunkResult.originalTokenCount : undefined;
+  const originalTokenCount = undefined;
 
   const chatContext = truncateChatForContext(chunkedMessages, limit);
   
@@ -935,20 +903,17 @@ ${participantAxisInstruction}
 export async function serverAnalyzeRomanticDynamics(
   messages: ChatMessage[],
   limit: number,
-  tier: UserTier = 'free',
-  analysisMode?: AnalysisDepthMode,
+  modelPreference: AnalysisModelPreference = 'fast',
   telemetryContext?: GeminiTelemetryContext
 ): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; originalTokenCount?: number; telemetry?: GeminiCallTelemetry }> {
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
-  const budget = getAnalysisBudget(tier);
-  const model = getAnalysisModel(tier, analysisMode);
-  const chunkResult = budget.metric === 'tokens'
-    ? createGroupAnalysisChunksByTokens(messages, budget.max)
-    : createGroupAnalysisChunks(messages, budget.max);
+  const budget = getAnalysisBudget();
+  const model = getAnalysisModel(modelPreference);
+  const chunkResult = createGroupAnalysisChunks(messages, budget.max);
   const chunkedMessages = chunkResult.chunks;
   const strategy = chunkResult.strategy;
   const originalWordCount = 'originalWordCount' in chunkResult ? chunkResult.originalWordCount : undefined;
-  const originalTokenCount = 'originalTokenCount' in chunkResult ? chunkResult.originalTokenCount : undefined;
+  const originalTokenCount = undefined;
 
   const chatContext = truncateChatForContext(chunkedMessages, limit);
   
@@ -971,9 +936,9 @@ export async function serverAnalyzeRomanticDynamics(
   
   ${romanticPromptWithFormatRules}
 
-  ×”×—×–×™×¨×• ××ª ×›×œ ×”×ª×©×•×‘×” ×›-JSON ×™×—×™×“ ×¢× ×©× ×™ ×©×“×•×ª:
-  - analysisText: ×›×œ ×”×˜×§×¡×˜ ×”×ž×œ× ×©×œ × ×™×ª×•×— ×”×–×•×’×™×•×ª, ×‘×“×™×•×§ ×‘×¤×•×¨×ž×˜ ×©×”×ª×‘×§×©×ª× ×›×‘×¨ ×œ×”×—×–×™×¨.
-  - participantAxisScores: ×ž×¢×¨×š ×¦×™×•× ×™ ×”×ž×©×ª×ª×¤×™×.
+  החזירו את כל התשובה כ-JSON יחיד עם שני שדות:
+  - analysisText: כל הטקסט המלא של ניתוח הזוגיות, בדיוק בפורמט שהתבקשתם כבר להחזיר.
+  - participantAxisScores: מערך ציוני המשתתפים.
 
   ${participantAxisInstruction}
   `;
@@ -1046,8 +1011,7 @@ export async function serverAskTheAunt(
   chatSections: ChatRecordSection[],
   targetUser: string | null,
   userQuestion: string,
-  tier: UserTier = 'free',
-  analysisMode?: AnalysisDepthMode,
+  modelPreference: AnalysisModelPreference = 'fast',
   telemetryContext?: GeminiTelemetryContext
 ): Promise<{ result: string; strategy?: ChunkingStrategy; originalWordCount?: number; telemetry?: GeminiCallTelemetry }> {
   const sanitizedQuestion = sanitizeUserQuestion(userQuestion);
@@ -1069,7 +1033,7 @@ export async function serverAskTheAunt(
   }
 
   const ai = new GoogleGenAI({ apiKey: await getApiKey() });
-  const model = getAnalysisModel(tier, analysisMode);
+  const model = getAnalysisModel(modelPreference);
   const systemInstruction = await getSystemInstruction();
   const questionScope = targetUser ? `about ${targetUser}` : 'about the overall chat';
   const scopeNote = targetUser
@@ -1244,7 +1208,7 @@ export async function serverGenerateCartoonImage(prompt: string): Promise<string
       logger.warning('Vertex AI Imagen: Image blocked by content filters', {
         raiReason
       });
-      throw new Error('×”×ª×ž×•× ×” × ×—×¡×ž×” ×¢×œ ×™×“×™ ×ž×¡× × ×™ ×”×ª×•×›×Ÿ ×©×œ Google. × ×¡×” ×œ× ×¡×— ×ž×—×“×© ××ª ×”×‘×§×©×”.');
+      throw new Error('התמונה נחסמה על ידי מסנני התוכן של Google. נסה לנסח מחדש את הבקשה.');
     }
 
     // Check for image data - Imagen 4 uses bytesBase64Encoded as stringValue
@@ -1320,14 +1284,14 @@ export async function serverGetVisualAssetData(
     
     // Fallback data
     data = {
-      headline: "×”× ×™×ª×•×— ×”×¤×¡×™×›×•×œ×•×’×™ ×©×œ×š",
-      points: ["× ×™×ª×•×— ×ž×¤×•×¨×˜ ×–×ž×™×Ÿ ×‘×§×¨×•×‘"],
+      headline: "הניתוח הפסיכולוגי שלך",
+      points: ["ניתוח מפורט זמין בקרוב"],
       visualPrompt: "A friendly cartoon character in a bright, cheerful setting, 3D animated style"
     };
   }
   
   return {
-    headline: data.headline || "×”× ×™×ª×•×— ×”×¤×¡×™×›×•×œ×•×’×™ ×©×œ×š",
+    headline: data.headline || "הניתוח הפסיכולוגי שלך",
     points: data.points || [],
     visualPrompt: data.visualPrompt || "A friendly animal in a bright setting, 3D animated cartoon style"
   };

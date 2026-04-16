@@ -1,89 +1,100 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkDailyUploadLimit, incrementDailyUpload, getUserTier, ensureUserInitialized, recordAnalyticsEvent } from '@/lib/firestore-admin';
+import {
+  ensureUserInitialized,
+  getRollingSubmissionQuota,
+  logUpload,
+  recordAnalyticsEvent,
+  recordRollingSubmission,
+} from '@/lib/firestore-admin';
+import { requireAuthenticatedRequest } from '@/lib/request-auth';
+
+const QUOTA_ERROR_MESSAGE = 'הגעת למכסת ההעלאות שלך כרגע. אפשר לשלוח עד 3 קבצים או טקסטים בכל 24 שעות.';
+
+function withLegacyAliases(snapshot: Awaited<ReturnType<typeof getRollingSubmissionQuota>>) {
+  return {
+    ...snapshot,
+    canUpload: snapshot.canSubmit,
+    maxUploads: snapshot.maxSubmissions,
+    remainingUploads: snapshot.remainingSubmissions,
+  };
+}
 
 export async function POST(req: NextRequest) {
   try {
-    let body: { userId?: string; action?: string };
+    let body: {
+      userId?: string;
+      action?: string;
+      source?: 'primary_upload' | 'pasted_text' | 'ask_aunt_extra';
+      participantsCount?: number;
+      tokensCount?: number;
+    };
     try {
       body = await req.json();
     } catch {
       return NextResponse.json({ error: 'Invalid or missing JSON body' }, { status: 400 });
     }
-    const { userId, action } = body;
 
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID required' }, { status: 400 });
+    const auth = await requireAuthenticatedRequest(req, body.userId || null);
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    // Ensure user document exists with defaults before checking tier
-    await ensureUserInitialized(userId);
+    const { userId, userEmail } = auth.context;
+    await ensureUserInitialized(userId, userEmail || undefined);
 
-    // Get user's tier and max uploads from database
-    const { tier, maxDailyUploads } = await getUserTier(userId);
+    const action = body.action || 'check';
 
     if (action === 'check') {
-      const result = await checkDailyUploadLimit(userId, maxDailyUploads);
-      const limitMessage = tier === 'free'
-        ? 'מיצית את מכסת הניתוחים שלך. כדי להמשיך לקבל ניתוחים צריך להצטרף למנוי.'
-        : 'הגעת למכסת הניתוחים שלך כרגע. אפשר לנסות שוב אחרי חידוש המכסה או לשדרג את המנוי.';
-
-      if (!result.canUpload) {
-        await recordAnalyticsEvent({
-          category: 'analysis',
-          eventName: 'analysis_rejected_limit',
-          status: 'rejected',
-          userId,
-          tier,
-          message: tier === 'free'
-            ? 'Analysis rejected because the free overall limit was reached'
-            : 'Analysis rejected because the daily limit was reached',
-          metadata: {
-            currentCount: result.currentCount,
-            maxUploads: maxDailyUploads,
-            limitKind: tier === 'free' ? 'overall' : 'daily',
-          },
-        }).catch(() => {});
-      }
-      return NextResponse.json({ 
-        canUpload: result.canUpload, 
-        error: result.canUpload ? null : limitMessage,
-        currentCount: result.currentCount, 
-        maxUploads: maxDailyUploads,
-        remainingUploads: result.remainingUploads
+      const snapshot = await getRollingSubmissionQuota(userId);
+      return NextResponse.json({
+        ...withLegacyAliases(snapshot),
+        error: snapshot.canSubmit ? null : QUOTA_ERROR_MESSAGE,
       });
-    } else if (action === 'increment') {
-      try {
-        const result = await incrementDailyUpload(userId, maxDailyUploads);
+    }
+
+    if (action === 'record' || action === 'increment') {
+      const snapshot = await recordRollingSubmission(userId, body.source || 'primary_upload');
+
+      if (!snapshot.accepted) {
         return NextResponse.json({
-          ...result,
-          maxUploads: maxDailyUploads,
-        });
-      } catch (error: any) {
-        if (error.message === 'Daily upload limit reached') {
-          await recordAnalyticsEvent({
-            category: 'analysis',
-            eventName: 'analysis_rejected_limit',
-            status: 'rejected',
-            userId,
-            tier,
-            message: 'Analysis increment rejected because daily limit was reached',
-            metadata: {
-              currentCount: maxDailyUploads,
-              maxUploads: maxDailyUploads,
-              limitKind: tier === 'free' ? 'overall' : 'daily',
-            },
-          }).catch(() => {});
-          return NextResponse.json({ 
-            error: tier === 'free'
-              ? 'מיצית את מכסת הניתוחים שלך. כדי להמשיך לקבל ניתוחים צריך להצטרף למנוי.'
-              : 'הגעת למכסת הניתוחים שלך כרגע. אפשר לנסות שוב אחרי חידוש המכסה או לשדרג את המנוי.',
-            currentCount: maxDailyUploads,
-            maxUploads: maxDailyUploads,
-            remainingUploads: 0,
-          }, { status: 429 });
-        }
-        throw error;
+          ...withLegacyAliases(snapshot),
+          quotaExceeded: true,
+          error: QUOTA_ERROR_MESSAGE,
+        }, { status: 429 });
       }
+
+      await recordAnalyticsEvent({
+        category: 'upload',
+        eventName: 'submission_quota_recorded',
+        status: 'completed',
+        userId,
+        userEmail,
+        message: 'Rolling submission quota recorded',
+        metadata: {
+          source: body.source || 'primary_upload',
+          currentCount: snapshot.currentCount,
+          maxSubmissions: snapshot.maxSubmissions,
+          remainingSubmissions: snapshot.remainingSubmissions,
+          resetAt: snapshot.resetAt,
+        },
+      }).catch(() => {});
+
+      const participantsCount = Number(body.participantsCount);
+      const tokensCount = Number(body.tokensCount);
+      const shouldCreateSession =
+        body.source !== 'ask_aunt_extra' &&
+        Number.isFinite(participantsCount) &&
+        Number.isFinite(tokensCount) &&
+        participantsCount > 0 &&
+        tokensCount >= 0;
+      const sessionId = shouldCreateSession
+        ? await logUpload(userId, participantsCount, tokensCount)
+        : null;
+
+      return NextResponse.json({
+        ...withLegacyAliases(snapshot),
+        ...(sessionId && { sessionId }),
+      });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

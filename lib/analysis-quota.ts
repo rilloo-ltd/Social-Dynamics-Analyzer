@@ -2,10 +2,8 @@ import 'server-only';
 
 import { UserTier } from '@/types';
 import {
-  checkDailyUploadLimit,
   ensureUserInitialized,
-  getUserTier,
-  incrementDailyUpload,
+  getRollingSubmissionQuota,
 } from '@/lib/firestore-admin';
 
 export interface AnalysisQuotaSnapshot {
@@ -14,6 +12,7 @@ export interface AnalysisQuotaSnapshot {
   currentCount: number;
   maxUploads: number;
   remainingUploads: number;
+  resetAt: string | null;
 }
 
 export class AnalysisQuotaExceededError extends Error {
@@ -21,11 +20,7 @@ export class AnalysisQuotaExceededError extends Error {
   readonly quota: AnalysisQuotaSnapshot;
 
   constructor(quota: AnalysisQuotaSnapshot) {
-    super(
-      quota.tier === 'free'
-        ? 'הניתוח לא התחיל כי מיצית את מכסת הניתוחים שלך. כדי להמשיך לקבל ניתוחים צריך להצטרף למנוי.'
-        : 'הניתוח לא התחיל כי הגעת למכסת הניתוחים שלך כרגע. אפשר לנסות שוב אחרי חידוש המכסה או לשדרג את המנוי.'
-    );
+    super('Submission quota reached. Users can submit 3 parsed chats or text entries per rolling 24 hours.');
     this.name = 'AnalysisQuotaExceededError';
     this.quota = quota;
   }
@@ -46,15 +41,15 @@ async function getAnalysisQuotaSnapshot(
   }
 
   await ensureUserInitialized(userId, userEmail || undefined);
-  const { tier, maxDailyUploads } = await getUserTier(userId);
-  const result = await checkDailyUploadLimit(userId, maxDailyUploads);
+  const quota = await getRollingSubmissionQuota(userId);
 
   return {
-    tier,
-    canUpload: result.canUpload,
-    currentCount: result.currentCount,
-    maxUploads: maxDailyUploads,
-    remainingUploads: result.remainingUploads,
+    tier: 'free',
+    canUpload: quota.canSubmit,
+    currentCount: quota.currentCount,
+    maxUploads: quota.maxSubmissions,
+    remainingUploads: quota.remainingSubmissions,
+    resetAt: quota.resetAt,
   };
 }
 
@@ -75,30 +70,5 @@ export async function consumeSuccessfulAnalysisQuota(
   userId?: string | null,
   userEmail?: string | null
 ): Promise<AnalysisQuotaSnapshot | null> {
-  if (!userId) {
-    return null;
-  }
-
-  await ensureUserInitialized(userId, userEmail || undefined);
-  const { tier, maxDailyUploads } = await getUserTier(userId);
-
-  try {
-    const result = await incrementDailyUpload(userId, maxDailyUploads);
-    return {
-      tier,
-      canUpload: result.remainingUploads > 0 || maxDailyUploads >= 999999,
-      currentCount: result.currentCount,
-      maxUploads: maxDailyUploads,
-      remainingUploads: result.remainingUploads,
-    };
-  } catch (error) {
-    if (error instanceof Error && error.message === 'Daily upload limit reached') {
-      const quota = await getAnalysisQuotaSnapshot(userId, userEmail);
-      if (quota) {
-        throw new AnalysisQuotaExceededError(quota);
-      }
-    }
-
-    throw error;
-  }
+  return getAnalysisQuotaSnapshot(userId, userEmail);
 }

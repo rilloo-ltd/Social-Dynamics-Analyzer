@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Script from 'next/script';
 import './globals.css';
-import { PayPalProvider } from '@/components/PayPalProvider';
 import { ClientLayout } from '@/components/ClientLayout';
 
 export const metadata: Metadata = {
@@ -41,9 +40,7 @@ export default function RootLayout({
         </Script>
 
         <ClientLayout>
-          <PayPalProvider>
-            {children}
-          </PayPalProvider>
+          {children}
         </ClientLayout>
       </body>
     </html>
